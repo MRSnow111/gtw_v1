@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { useRouter } from "next/navigation";
 import { motion } from "framer-motion";
 import { GlassCard } from "@/components/ui/GlassCard";
 import { GlassInput } from "@/components/ui/GlassInput";
@@ -21,13 +22,14 @@ const CARD_ANIM = {
 };
 
 export function LoginScreen() {
+  const router = useRouter();
   const [login, setLogin] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!login.trim() || !password.trim()) {
       setError("Заполните все поля");
@@ -35,8 +37,23 @@ export function LoginScreen() {
     }
     setLoading(true);
     setError("");
-    // TODO: real auth — бэкенд пока отсутствует
-    setTimeout(() => setLoading(false), 1500);
+    try {
+      const res = await fetch("/api/auth/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ login, password }),
+      });
+      if (res.ok) {
+        router.push("/chat");
+        return;
+      }
+      const data = await res.json().catch(() => ({}));
+      setError(data.message ?? "Неверный логин или пароль");
+    } catch {
+      setError("Сервер недоступен, попробуйте ещё раз");
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (
@@ -185,7 +202,7 @@ export function LoginScreen() {
             animate="animate"
             className="text-center text-xs text-[rgba(220,235,230,0.25)] mt-6"
           >
-            Свяжитесь с администратором для получения учётных данных
+            Демо-доступ: demo / demo — до подключения боевого бэкенда
           </motion.p>
         </GlassCard>
       </motion.div>

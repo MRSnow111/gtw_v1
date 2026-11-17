@@ -31,18 +31,19 @@ export function MessageList({ chatId }: MessageListProps) {
             key={msg.id}
             className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}
           >
-            <div
-              className={`max-w-[70%] rounded-lg p-3 ${
-                msg.role === "user"
-                  ? "bg-primary text-primary-foreground"
-                  : "bg-muted"
-              }`}
-            >
-              <p className="text-sm whitespace-pre-wrap">{msg.content}</p>
-              {msg.status === "streaming" && (
-                <span className="inline-block w-2 h-4 bg-current animate-pulse ml-1" />
-              )}
-            </div>
+            {msg.role === "user" ? (
+              <div className="max-w-[70%] rounded-2xl rounded-br-md bg-[rgba(143,184,174,0.9)] p-3 text-[#0A1412]">
+                <p className="text-sm whitespace-pre-wrap">{msg.content}</p>
+              </div>
+            ) : (
+              // Ответ агента — текст без карточки на фоне ленты (docs/design.md §10)
+              <div className="max-w-[80%] p-1 text-[rgba(220,235,230,0.85)]">
+                <p className="text-sm whitespace-pre-wrap">{msg.content}</p>
+                {msg.status === "streaming" && (
+                  <span className="ml-1 inline-block h-4 w-2 animate-pulse bg-[rgba(143,184,174,0.8)] align-middle" />
+                )}
+              </div>
+            )}
           </div>
         ))
       )}

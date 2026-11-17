@@ -1,17 +1,16 @@
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 
+// Защита /chat*: без куки gtw-auth — редирект на / (docs/design.md §9).
+// TODO: когда бэкенд начнёт выдавать подписанные токены — добавить проверку
+// подписи вместо проверки наличия куки.
 export function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
-  // Protect /chat routes — mock: always allow for now
-  // Replace with real session/cookie check when backend is ready
-  const isChatRoute = pathname.startsWith("/chat");
-  if (isChatRoute) {
+  if (pathname.startsWith("/chat")) {
     const auth = request.cookies.get("gtw-auth");
     if (!auth) {
-      // Mock: allow access until real auth is implemented
-      // return NextResponse.redirect(new URL("/", request.url));
+      return NextResponse.redirect(new URL("/", request.url));
     }
   }
 

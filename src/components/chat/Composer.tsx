@@ -2,7 +2,7 @@
 
 import { Button } from "@/components/ui/button";
 import { Paperclip, Send, StopCircle } from "lucide-react";
-import { useState } from "react";
+import { useRef, useState } from "react";
 
 interface ComposerProps {
   chatId: string;
@@ -11,13 +11,22 @@ interface ComposerProps {
 export function Composer({ chatId }: ComposerProps) {
   const [text, setText] = useState("");
   const [isGenerating, setIsGenerating] = useState(false);
+  const taRef = useRef<HTMLTextAreaElement>(null);
+
+  const autosize = () => {
+    const ta = taRef.current;
+    if (!ta) return;
+    ta.style.height = "auto";
+    ta.style.height = `${Math.min(ta.scrollHeight, 200)}px`; // 1→~8 строк, дальше внутренний скролл
+  };
 
   const handleSend = () => {
     if (!text.trim()) return;
     console.log(`[Composer] Sending to chat ${chatId}:`, text);
     setText("");
+    requestAnimationFrame(autosize);
     setIsGenerating(true);
-    
+
     // Mock stop after 3 seconds
     setTimeout(() => setIsGenerating(false), 3000);
   };
@@ -30,27 +39,44 @@ export function Composer({ chatId }: ComposerProps) {
   };
 
   return (
-    <div className="border-t bg-card p-4">
-      <div className="max-w-4xl mx-auto relative">
+    <div className="shrink-0 border-t border-[rgba(220,235,230,0.08)] p-4">
+      <div className="glass-light relative mx-auto max-w-4xl rounded-2xl focus-within:border-[rgba(143,184,174,0.35)]">
         <textarea
+          ref={taRef}
           value={text}
-          onChange={(e) => setText(e.target.value)}
+          onChange={(e) => {
+            setText(e.target.value);
+            autosize();
+          }}
           onKeyDown={handleKeyDown}
           placeholder="Введите сообщение или /команду..."
-          className="w-full resize-none rounded-lg border border-input bg-transparent px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 min-h-[60px] max-h-[200px]"
-          rows={2}
+          className="w-full resize-none bg-transparent px-4 pb-12 pt-3 text-sm text-[rgba(220,235,230,0.85)] placeholder:text-[rgba(220,235,230,0.35)] focus-visible:outline-none min-h-[56px] max-h-[200px] overflow-y-auto rounded-2xl"
+          rows={1}
         />
-        <div className="absolute right-2 bottom-2 flex items-center gap-2">
-          <Button variant="ghost" size="icon" type="button" className="h-8 w-8 text-muted-foreground">
+        <div className="absolute bottom-2 left-2 right-2 flex items-center justify-between">
+          <Button
+            variant="ghost"
+            size="icon"
+            type="button"
+            className="h-8 w-8 text-[rgba(220,235,230,0.4)] hover:bg-[rgba(143,184,174,0.08)] hover:text-[rgba(220,235,230,0.8)]"
+          >
             <Paperclip className="h-4 w-4" />
           </Button>
-          <Button 
-            size="icon" 
+          <Button
+            size="icon"
             onClick={handleSend}
             disabled={!text.trim() && !isGenerating}
-            className={isGenerating ? "bg-red-500 hover:bg-red-600" : ""}
+            className={
+              isGenerating
+                ? "h-8 w-8 rounded-full bg-[rgba(220,80,80,0.85)] text-white hover:bg-[rgba(220,80,80,1)]"
+                : "h-8 w-8 rounded-full bg-gradient-to-r from-[#8FB8AE] to-[#4D7B73] text-[#0A1412] hover:from-[#9EC4BC] hover:to-[#5A8A80]"
+            }
           >
-            {isGenerating ? <StopCircle className="h-4 w-4" /> : <Send className="h-4 w-4" />}
+            {isGenerating ? (
+              <StopCircle className="h-4 w-4" />
+            ) : (
+              <Send className="h-4 w-4" />
+            )}
           </Button>
         </div>
       </div>
