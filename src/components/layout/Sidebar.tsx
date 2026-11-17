@@ -1,48 +1,322 @@
 "use client";
 
-import { Button } from "@/components/ui/button";
-import { Plus, MessageSquare, Settings } from "lucide-react";
-import { useChatStore } from "@/stores/chatStore";
+import { useMemo, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
+import { AnimatePresence, motion } from "framer-motion";
+import { formatDistanceToNowStrict } from "date-fns";
+import { ru } from "date-fns/locale";
+import {
+  BarChart3, LogOut, MessageSquare, MoreHorizontal, Pencil,
+  Plus, Search, Settings, SquareTerminal, Sun, Trash2, X,
+} from "lucide-react";
+import { toast } from "sonner";
+import { cn } from "@/lib/utils";
+import { useAuthStore } from "@/stores/authStore";
+import { useDemoStore } from "@/stores/demoStore";
+import { useUiStore } from "@/stores/uiStore";
+import { groupChats, type DemoChat } from "@/lib/demoData";
+import { IconButton, GlassBadge } from "@/components/ui/glass";
+import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 
-export function Sidebar() {
-  const { setActiveChat } = useChatStore();
+const kindIcon = {
+  chat: MessageSquare,
+  terminal: SquareTerminal,
+  data: BarChart3,
+} as const;
+
+const kindTint = {
+  chat: "text-mint",
+  terminal: "text-aqua",
+  data: "text-lagoon",
+} as const;
+
+interface SidebarProps {
+  className?: string;
+  /** внутри мобильного drawer не рендерим элементы, требующие закрытия шторки иначе */
+  onNavigate?: () => void;
+}
+
+export function Sidebar({ className, onNavigate }: SidebarProps) {
+  const router = useRouter();
+  const { chats, turnsByChat, activeChatId, setActiveChat, renameChat, deleteChat, createChat } = useDemoStore();
+  const { setSettingsOpen, setDrawerOpen } = useUiStore();
+  const logout = useAuthStore((s) => s.logout);
+
+  const [query, setQuery] = useState("");
+  const [menuId, setMenuId] = useState<string | null>(null);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [deleting, setDeleting] = useState<DemoChat | null>(null);
+  const editRef = useRef<HTMLInputElement>(null);
+
+  const runningIds = useMemo(() => {
+    const ids = new Set<string>();
+    for (const [chatId, turns] of Object.entries(turnsByChat)) {
+      const last = turns[turns.length - 1];
+      if (last?.kind === "agent" && last.agentState === "running") ids.add(chatId);
+    }
+    return ids;
+  }, [turnsByChat]);
+
+  const fmtTime = (iso: string) =>
+    formatDistanceToNowStrict(new Date(iso), { addSuffix: false, locale: ru }).replace("секунд", "с").replace("секунды", "с").replace("минут", "мин").replace("минуты", "мин").replace("час", "ч").replace("часа", "ч").replace("часов", "ч") + " назад";
+
+  const groups = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    const filtered = q ? chats.filter((c) => c.title.toLowerCase().includes(q)) : chats;
+    return groupChats(filtered);
+  }, [chats, query]);
+
+  const openChat = (id: string) => {
+    setActiveChat(id);
+    setDrawerOpen(false);
+    onNavigate?.();
+    router.push(`/chat/${id}`);
+  };
+
+  const newChat = () => {
+    setActiveChat(null);
+    setDrawerOpen(false);
+    onNavigate?.();
+    router.push("/chat");
+  };
+
+  const startRename = (c: DemoChat) => {
+    setMenuId(null);
+    setEditingId(c.id);
+    setTimeout(() => editRef.current?.select(), 30);
+  };
+
+  const commitRename = () => {
+    if (editingId && editRef.current) {
+      const title = editRef.current.value.trim();
+      if (title) {
+        renameChat(editingId, title);
+        toast.success("Чат переименован");
+      }
+    }
+    setEditingId(null);
+  };
+
+  const doLogout = () => {
+    logout();
+    setDrawerOpen(false);
+    router.push("/");
+  };
 
   return (
-    <aside className="w-64 border-r bg-card flex flex-col h-full">
-      <div className="p-4 border-b">
-        <Button className="w-full justify-start" onClick={() => setActiveChat(null)}>
-          <Plus className="mr-2 h-4 w-4" />
-          Новый чат
-        </Button>
+    <div className={cn("glass-strong relative flex h-full flex-col overflow-hidden", className)}>
+      {/* ── шапка ── */}
+      <div className="flex items-center gap-3 px-4 pb-3 pt-4">
+        <div className="glass-medium flex h-10 w-10 items-center justify-center rounded-xl border-mint/25 shadow-[0_0_18px_rgba(94,208,174,0.2)]">
+          <span className="text-gradient-brand font-mono text-sm font-semibold tracking-widest">G</span>
+        </div>
+        <div className="min-w-0 flex-1">
+          <div className="text-[15px] font-medium tracking-wide text-mint-soft">GTW</div>
+          <div className="text-[11px] text-[rgba(220,235,230,0.6)]">шлюз к агенту Hermes</div>
+        </div>
+        <IconButton
+          disabled
+          title="Светлая тема в разработке"
+          aria-label="Переключить тему (недоступно)"
+        >
+          <Sun className="h-4 w-4" />
+        </IconButton>
+        {onNavigate && (
+          <IconButton className="md:hidden" onClick={onNavigate} aria-label="Закрыть меню">
+            <X className="h-4 w-4" />
+          </IconButton>
+        )}
       </div>
 
-      <div className="flex-1 overflow-y-auto p-2">
-        <div className="text-sm font-medium text-muted-foreground mb-2 px-2">Чаты</div>
-        {/* Placeholder for chat list */}
-        <div className="space-y-1">
-          <button
-            className="w-full text-left px-3 py-2 text-sm rounded-md hover:bg-accent transition-colors"
-            onClick={() => setActiveChat("1")}
-          >
-            <MessageSquare className="inline-block mr-2 h-4 w-4" />
-            Анализ отчета
-          </button>
-          <button
-            className="w-full text-left px-3 py-2 text-sm rounded-md hover:bg-accent transition-colors"
-            onClick={() => setActiveChat("2")}
-          >
-            <MessageSquare className="inline-block mr-2 h-4 w-4" />
-            Идеи для проекта
-          </button>
+      {/* ── новый чат ── */}
+      <div className="px-4 pb-3">
+        <motion.button
+          whileHover={{ boxShadow: "0 0 24px rgba(143,184,174,0.25)" }}
+          whileTap={{ scale: 0.98 }}
+          onClick={newChat}
+          className="glass-medium flex w-full items-center justify-center gap-2 rounded-full py-2.5 text-sm text-foreground transition-colors hover:border-mint/40"
+        >
+          <Plus className="h-4 w-4 text-mint" />
+          Новый чат
+        </motion.button>
+      </div>
+
+      {/* ── поиск ── */}
+      <div className="px-4 pb-3">
+        <div className="glass-light relative rounded-full">
+          <Search className="pointer-events-none absolute left-3.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[rgba(220,235,230,0.6)]" />
+          <input
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Поиск по чатам…"
+            className="w-full bg-transparent py-2 pl-9 pr-3 text-[13px] outline-none placeholder:text-[rgba(220,235,230,0.52)]"
+          />
         </div>
       </div>
 
-      <div className="p-4 border-t">
-        <Button variant="ghost" className="w-full justify-start">
-          <Settings className="mr-2 h-4 w-4" />
-          Настройки
-        </Button>
+      {/* ── список чатов ── */}
+      <div className="scroll-area min-h-0 flex-1 overflow-y-auto px-2.5 pb-2">
+        {groups.length === 0 && (
+          <p className="mt-8 text-center text-xs text-[rgba(220,235,230,0.6)]">
+            Ничего не найдено
+          </p>
+        )}
+        {groups.map((group) => (
+          <div key={group.label} className="mb-2">
+            <div className="px-2.5 pb-1 pt-2 text-[10px] uppercase tracking-[0.12em] text-[rgba(220,235,230,0.6)]">
+              {group.label}
+            </div>
+            <AnimatePresence initial={false}>
+              {group.chats.map((chat) => {
+                const Icon = kindIcon[chat.kind] ?? MessageSquare;
+                const active = chat.id === activeChatId;
+                return (
+                  <div
+                    key={chat.id}
+                    className={cn(
+                      "group relative mb-0.5 rounded-xl transition-colors duration-200",
+                      active
+                        ? "bg-mint/18 shadow-[inset_0_0_0_1px_rgba(143,184,174,0.35),0_0_20px_rgba(143,184,174,0.08)]"
+                        : "hover:bg-white/[0.055]"
+                    )}
+                  >
+                    {active && (
+                      <span className="absolute left-0 top-1/2 h-[calc(100%-12px)] w-[3px] -translate-y-1/2 rounded-full bg-mint shadow-[0_0_10px_rgba(143,184,174,0.7)]" />
+                    )}
+                    <button
+                      onClick={() => openChat(chat.id)}
+                      className="flex w-full items-center gap-2.5 px-3 py-2.5 text-left"
+                    >
+                      <Icon
+                        className={cn(
+                          "h-4 w-4 shrink-0",
+                          active ? kindTint[chat.kind] : "text-[rgba(220,235,230,0.7)]"
+                        )}
+                      />
+                      {editingId === chat.id ? (
+                        <input
+                          ref={editRef}
+                          defaultValue={chat.title}
+                          onClick={(e) => e.stopPropagation()}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter") commitRename();
+                            if (e.key === "Escape") setEditingId(null);
+                          }}
+                          onBlur={commitRename}
+                          className="w-full min-w-0 rounded bg-fern-950/60 px-1.5 py-0.5 text-[13px] outline-none ring-1 ring-mint/40"
+                          autoFocus
+                        />
+                      ) : (
+                        <div className="min-w-0 flex-1">
+                          <div
+                            className={cn(
+                              "truncate text-[13px] leading-5",
+                              active ? "text-foreground" : "text-dim"
+                            )}
+                          >
+                            {chat.title}
+                          </div>
+                        </div>
+                      )}
+                      {editingId !== chat.id && (
+                        <span className="shrink-0 text-[11px] tabular-nums text-[rgba(220,235,230,0.6)] transition-opacity group-hover:opacity-0">
+                          {runningIds.has(chat.id) ? (
+                            <span className="inline-block h-3 w-3 animate-spin rounded-full border-[1.5px] border-mint border-t-transparent align-[-2px]" />
+                          ) : (
+                            fmtTime(chat.updatedAt)
+                          )}
+                        </span>
+                      )}
+                    </button>
+                    {editingId !== chat.id && (
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setMenuId(menuId === chat.id ? null : chat.id);
+                        }}
+                        className={cn(
+                          "absolute right-2 top-1/2 flex h-7 w-7 -translate-y-1/2 items-center justify-center rounded-lg text-[rgba(220,235,230,0.7)] opacity-0 transition-all hover:bg-white/10 hover:text-foreground group-hover:opacity-100",
+                          menuId === chat.id && "opacity-100"
+                        )}
+                        aria-label="Действия с чатом"
+                      >
+                        <MoreHorizontal className="h-4 w-4" />
+                      </button>
+                    )}
+                    <AnimatePresence>
+                      {menuId === chat.id && (
+                        <>
+                          <div
+                            className="fixed inset-0 z-40"
+                            onClick={() => setMenuId(null)}
+                          />
+                          <motion.div
+                            initial={{ opacity: 0, y: -4, scale: 0.97 }}
+                            animate={{ opacity: 1, y: 0, scale: 1 }}
+                            exit={{ opacity: 0, y: -4, scale: 0.97 }}
+                            transition={{ duration: 0.15 }}
+                            className="glass-medium absolute right-1 top-10 z-50 w-40 rounded-2xl p-1.5"
+                          >
+                            <button
+                              onClick={() => startRename(chat)}
+                              className="flex w-full items-center gap-2 rounded-xl px-3 py-2 text-[13px] text-dim hover:bg-white/[0.06] hover:text-foreground"
+                            >
+                              <Pencil className="h-3.5 w-3.5" /> Переименовать
+                            </button>
+                            <button
+                              onClick={() => {
+                                setMenuId(null);
+                                setDeleting(chat);
+                              }}
+                              className="flex w-full items-center gap-2 rounded-xl px-3 py-2 text-[13px] text-red-300/90 hover:bg-red-500/10"
+                            >
+                              <Trash2 className="h-3.5 w-3.5" /> Удалить
+                            </button>
+                          </motion.div>
+                        </>
+                      )}
+                    </AnimatePresence>
+                  </div>
+                );
+              })}
+            </AnimatePresence>
+          </div>
+        ))}
       </div>
-    </aside>
+
+      {/* ── футер ── */}
+      <div className="flex items-center gap-2 border-t border-white/[0.08] px-4 py-3">
+        <button
+          onClick={() => {
+            setSettingsOpen(true);
+            setDrawerOpen(false);
+          }}
+          className="flex flex-1 items-center gap-2.5 rounded-xl px-3 py-2 text-[13px] text-dim transition-colors hover:bg-white/[0.05] hover:text-foreground"
+        >
+          <Settings className="h-4 w-4" />
+          Настройки
+        </button>
+        <GlassBadge className="text-[10px]">demo</GlassBadge>
+        <IconButton onClick={doLogout} aria-label="Выйти" title="Выйти">
+          <LogOut className="h-4 w-4" />
+        </IconButton>
+      </div>
+
+      <ConfirmDialog
+        open={!!deleting}
+        title={deleting ? `Удалить «${deleting.title}»?` : ""}
+        description="Чат и его история будут удалены безвозвратно."
+        confirmLabel="Удалить"
+        onConfirm={() => {
+          if (deleting) {
+            deleteChat(deleting.id);
+            toast.success("Чат удалён");
+            if (deleting.id === activeChatId) router.push("/chat");
+          }
+          setDeleting(null);
+        }}
+        onCancel={() => setDeleting(null)}
+      />
+    </div>
   );
 }

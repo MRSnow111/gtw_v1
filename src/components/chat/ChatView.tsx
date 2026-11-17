@@ -5,15 +5,18 @@ import { MessageList } from "@/components/chat/MessageList";
 import { Composer } from "@/components/chat/Composer";
 
 interface ChatViewProps {
-  chatId: string;
+  chatId: string | null;
+  title?: string;
 }
 
-export function ChatView({ chatId }: ChatViewProps) {
+export function ChatView({ chatId, title }: ChatViewProps) {
   return (
-    <div className="flex-1 flex flex-col h-full">
-      <ChatHeader chatId={chatId} />
-      <MessageList chatId={chatId} />
+    <>
+      <ChatHeader title={title} />
+      <div className="min-h-0 flex-1">
+        <MessageList chatId={chatId} />
+      </div>
       <Composer chatId={chatId} />
-    </div>
+    </>
   );
 }

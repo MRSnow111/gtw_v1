@@ -1,22 +1,13 @@
-import type { Config } from "tailwindcss"
+import type { Config } from "tailwindcss";
 
 const config = {
   darkMode: ["class"],
   content: [
-    './pages/**/*.{ts,tsx}',
-    './components/**/*.{ts,tsx}',
-    './app/**/*.{ts,tsx}',
-    './src/**/*.{ts,tsx}',
+    "./app/**/*.{ts,tsx}",
+    "./src/**/*.{ts,tsx}",
   ],
   prefix: "",
   theme: {
-    container: {
-      center: true,
-      padding: "2rem",
-      screens: {
-        "2xl": "1400px",
-      },
-    },
     extend: {
       colors: {
         border: "hsl(var(--border))",
@@ -52,11 +43,36 @@ const config = {
           DEFAULT: "hsl(var(--card))",
           foreground: "hsl(var(--card-foreground))",
         },
+        // Midnight Fern raw palette
+        fern: {
+          950: "#0A1412",
+          900: "#17322E",
+          800: "#27524B",
+          700: "#4D7B73",
+        },
+        mint: {
+          DEFAULT: "#8FB8AE",
+          soft: "#EFF8F5",
+        },
+        // текстовые токены (var из globals.css) — не путать с shadcn `secondary`
+        dim: "var(--text-secondary)",
+        faint: "var(--text-muted)",
+        // цветовые акценты
+        aqua: "#5ED0AE",
+        lagoon: "#8AB8E8",
+        apricot: "#E0A87E",
+        success: "#75D6A8",
+      },
+      fontFamily: {
+        sans: ["var(--font-geist-sans)", "system-ui", "sans-serif"],
+        mono: ["var(--font-geist-mono)", "ui-monospace", "monospace"],
       },
       borderRadius: {
         lg: "var(--radius)",
-        md: "calc(var(--radius) - 2px)",
-        sm: "calc(var(--radius) - 4px)",
+        md: "calc(var(--radius) - 4px)",
+        sm: "calc(var(--radius) - 8px)",
+        "3xl": "1.5rem",
+        "4xl": "1.75rem",
       },
       keyframes: {
         "accordion-down": {
@@ -71,10 +87,11 @@ const config = {
       animation: {
         "accordion-down": "accordion-down 0.2s ease-out",
         "accordion-up": "accordion-up 0.2s ease-out",
+        "cursor-blink": "cursor-blink 1s step-end infinite",
       },
     },
   },
   plugins: [require("tailwindcss-animate")],
-} satisfies Config
+} satisfies Config;
 
-export default config
+export default config;

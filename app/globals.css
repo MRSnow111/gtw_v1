@@ -4,48 +4,47 @@
 
 @layer base {
   :root {
-    --background: 0 0% 100%;
-    --foreground: 222.2 84% 4.9%;
-    --card: 0 0% 100%;
-    --card-foreground: 222.2 84% 4.9%;
-    --popover: 0 0% 100%;
-    --popover-foreground: 222.2 84% 4.9%;
-    --primary: 221.2 83.2% 53.3%;
-    --primary-foreground: 210 40% 98%;
-    --secondary: 210 40% 96.1%;
-    --secondary-foreground: 222.2 47.4% 11.2%;
-    --muted: 210 40% 96.1%;
-    --muted-foreground: 215.4 16.3% 46.9%;
-    --accent: 210 40% 96.1%;
-    --accent-foreground: 222.2 47.4% 11.2%;
-    --destructive: 0 84.2% 60.2%;
-    --destructive-foreground: 210 40% 98%;
-    --border: 214.3 31.8% 91.4%;
-    --input: 214.3 31.8% 91.4%;
-    --ring: 221.2 83.2% 53.3%;
-    --radius: 0.5rem;
-  }
+    /* ── Midnight Fern tokens (dark is the only theme for now) ── */
+    --background: 170 40% 4%;          /* #081110 */
+    --foreground: 163 34% 94%;         /* #EAF5F2 */
 
-  .dark {
-    --background: 222.2 84% 4.9%;
-    --foreground: 210 40% 98%;
-    --card: 222.2 84% 4.9%;
-    --card-foreground: 210 40% 98%;
-    --popover: 222.2 84% 4.9%;
-    --popover-foreground: 210 40% 98%;
-    --primary: 217.2 91.2% 59.8%;
-    --primary-foreground: 222.2 47.4% 11.2%;
-    --secondary: 217.2 32.6% 17.5%;
-    --secondary-foreground: 210 40% 98%;
-    --muted: 217.2 32.6% 17.5%;
-    --muted-foreground: 215 20.2% 65.1%;
-    --accent: 217.2 32.6% 17.5%;
-    --accent-foreground: 210 40% 98%;
-    --destructive: 0 62.8% 30.6%;
-    --destructive-foreground: 210 40% 98%;
-    --border: 217.2 32.6% 17.5%;
-    --input: 217.2 32.6% 17.5%;
-    --ring: 224.3 76.3% 48%;
+    --card: 172 37% 14%;               /* #17322E */
+    --card-foreground: 162 30% 89%;
+    --popover: 172 35% 10%;
+    --popover-foreground: 162 30% 89%;
+
+    --primary: 165 23% 64%;            /* #8FB8AE */
+    --primary-foreground: 170 35% 8%;
+    --secondary: 168 30% 18%;
+    --secondary-foreground: 162 30% 89%;
+    --muted: 168 28% 12%;
+    --muted-foreground: 164 15% 62%;
+    --accent: 165 30% 20%;
+    --accent-foreground: 162 30% 89%;
+
+    --destructive: 0 55% 58%;
+    --destructive-foreground: 0 0% 98%;
+
+    --border: 168 15% 30%;
+    --input: 168 15% 30%;
+    --ring: 165 23% 64%;
+
+    --radius: 1rem;
+
+    /* raw brand hexes for direct use */
+    --fern-950: #0A1412;
+    --fern-900: #17322E;
+    --fern-800: #27524B;
+    --fern-700: #4D7B73;
+    --mint: #8FB8AE;
+    --text-hi: #DCEBE6;
+
+    /* text opacities — осветлённые значения для читаемости */
+    --text-secondary: rgba(234, 245, 242, 0.8);
+    --text-muted: rgba(234, 245, 242, 0.58);
+    --icon-idle: rgba(234, 245, 242, 0.7);
+    --border-soft: rgba(220, 235, 230, 0.15);
+    --border-glow: rgba(143, 184, 174, 0.35);
   }
 }
 
@@ -53,7 +52,239 @@
   * {
     @apply border-border;
   }
+  html {
+    color-scheme: dark;
+  }
   body {
     @apply bg-background text-foreground;
+    font-feature-settings: "ss01", "cv11";
+  }
+  ::selection {
+    background: rgba(143, 184, 174, 0.3);
+  }
+}
+
+/* ───────────────────────── Liquid Glass materials ───────────────────────── */
+
+.glass-light {
+  background: rgba(220, 235, 230, 0.08);
+  backdrop-filter: blur(14px) saturate(140%);
+  -webkit-backdrop-filter: blur(14px) saturate(140%);
+  border: 1px solid rgba(220, 235, 230, 0.14);
+  box-shadow:
+    inset 0 1px 0 rgba(220, 235, 230, 0.12),
+    0 8px 24px rgba(0, 0, 0, 0.18);
+}
+
+.glass-medium {
+  background: linear-gradient(
+    135deg,
+    rgba(234, 245, 242, 0.13),
+    rgba(39, 82, 75, 0.26)
+  );
+  backdrop-filter: blur(24px) saturate(145%);
+  -webkit-backdrop-filter: blur(24px) saturate(145%);
+  border: 1px solid rgba(220, 235, 230, 0.16);
+  box-shadow:
+    inset 0 1px 0 rgba(220, 235, 230, 0.18),
+    inset 0 -1px 0 rgba(10, 20, 18, 0.15),
+    0 16px 48px rgba(0, 0, 0, 0.22);
+}
+
+.glass-strong {
+  background: linear-gradient(
+    135deg,
+    rgba(234, 245, 242, 0.16),
+    rgba(14, 31, 27, 0.55)
+  );
+  backdrop-filter: blur(36px) saturate(150%);
+  -webkit-backdrop-filter: blur(36px) saturate(150%);
+  border: 1px solid rgba(220, 235, 230, 0.18);
+  box-shadow:
+    inset 0 1px 0 rgba(220, 235, 230, 0.22),
+    inset 0 -1px 0 rgba(10, 20, 18, 0.2),
+    inset 0 0 44px rgba(143, 184, 174, 0.04),
+    0 24px 64px rgba(0, 0, 0, 0.32);
+}
+
+/* top inner sheen for large panels */
+.glass-strong::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  background: linear-gradient(
+    160deg,
+    rgba(220, 235, 230, 0.08) 0%,
+    transparent 30%,
+    transparent 78%,
+    rgba(143, 184, 174, 0.05) 100%
+  );
+}
+
+/* fallback: no backdrop-filter support → opaque surfaces */
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .glass-light { background: rgba(23, 50, 46, 0.92); }
+  .glass-medium { background: rgba(19, 40, 37, 0.95); }
+  .glass-strong { background: rgba(14, 30, 27, 0.97); }
+}
+
+/* ─────────────── 3D-край стекла («толщина» + световой ободок) ─────────────── */
+
+.glass-edge {
+  box-shadow:
+    inset 0 1.5px 1px rgba(234, 245, 242, 0.3),
+    inset 1.5px 0 1px rgba(234, 245, 242, 0.08),
+    inset -1.5px 0 1px rgba(234, 245, 242, 0.06),
+    inset 0 -2.5px 2px rgba(5, 11, 10, 0.45),
+    inset 0 -1px 1.5px rgba(143, 184, 174, 0.3),
+    0 2px 6px rgba(0, 0, 0, 0.25),
+    0 28px 64px rgba(0, 0, 0, 0.38);
+}
+
+/* световой ободок: градиентная рамка 1.5px через mask */
+.glass-edge::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  padding: 1.5px;
+  background: linear-gradient(
+    135deg,
+    rgba(234, 245, 242, 0.5) 0%,
+    rgba(143, 184, 174, 0.18) 28%,
+    rgba(143, 184, 174, 0.06) 50%,
+    rgba(10, 20, 18, 0.25) 72%,
+    rgba(143, 184, 174, 0.35) 100%
+  );
+  -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+  -webkit-mask-composite: xor;
+  mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+  mask-composite: exclude;
+}
+
+/* лёгкий блик-полоска, скользящая по верхней кромке при появлении панели */
+@keyframes edge-sheen {
+  0% { transform: translateX(-120%); }
+  100% { transform: translateX(220%); }
+}
+.glass-edge-sheen::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 0;
+  height: 1px;
+  width: 40%;
+  border-radius: inherit;
+  pointer-events: none;
+  background: linear-gradient(
+    90deg,
+    transparent,
+    rgba(234, 245, 242, 0.55),
+    transparent
+  );
+  animation: edge-sheen 1.2s ease-out 1 both;
+}
+
+/* ─────────────── акцентные градиенты ─────────────── */
+
+.gradient-primary {
+  background: linear-gradient(135deg, #A7DACC 0%, #8FB8AE 40%, #5ED0AE 100%);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.3),
+    0 0 24px rgba(143, 184, 174, 0.35),
+    0 4px 16px rgba(0, 0, 0, 0.25);
+}
+.gradient-primary:hover {
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.3),
+    0 0 36px rgba(94, 208, 174, 0.5),
+    0 4px 16px rgba(0, 0, 0, 0.25);
+}
+
+.text-gradient-brand {
+  background: linear-gradient(120deg, #EFF8F5 0%, #8FB8AE 55%, #5ED0AE 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+/* ───────────────────────── Ambient background drift ───────────────────────── */
+
+@keyframes drift-a {
+  from { transform: translate3d(-6%, -4%, 0) scale(1); }
+  to   { transform: translate3d(7%, 6%, 0) scale(1.18); }
+}
+@keyframes drift-b {
+  from { transform: translate3d(5%, 6%, 0) scale(1.12); }
+  to   { transform: translate3d(-7%, -5%, 0) scale(1); }
+}
+@keyframes drift-c {
+  from { transform: translate3d(0, 8%, 0) scale(1); opacity: 0.7; }
+  to   { transform: translate3d(-4%, -8%, 0) scale(1.22); opacity: 1; }
+}
+
+/* медленное вращение аврора-слоя */
+@keyframes aurora-spin {
+  from { transform: rotate(0deg) scale(1.1); }
+  to   { transform: rotate(360deg) scale(1.1); }
+}
+/* дыхание общего свечения */
+@keyframes aurora-breathe {
+  0%, 100% { opacity: 0.55; }
+  50% { opacity: 0.85; }
+}
+
+@keyframes cursor-blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0; }
+}
+
+@keyframes shimmer {
+  from { background-position: -200px 0; }
+  to   { background-position: 200px 0; }
+}
+
+.skeleton {
+  border-radius: 0.75rem;
+  background:
+    linear-gradient(
+      90deg,
+      rgba(220, 235, 230, 0.05) 25%,
+      rgba(220, 235, 230, 0.1) 37%,
+      rgba(220, 235, 230, 0.05) 63%
+    );
+  background-size: 400px 100%;
+  animation: shimmer 1.6s ease-in-out infinite;
+}
+
+/* ───────────────────────── Scrollbars ───────────────────────── */
+
+.scroll-area {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(143, 184, 174, 0.25) transparent;
+}
+.scroll-area::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+.scroll-area::-webkit-scrollbar-thumb {
+  background: rgba(143, 184, 174, 0.25);
+  border-radius: 999px;
+}
+.scroll-area::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ambient-drift,
+  .ambient-aurora,
+  .skeleton {
+    animation: none !important;
+  }
+  * {
+    scroll-behavior: auto !important;
   }
 }
