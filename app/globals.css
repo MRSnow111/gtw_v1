@@ -1,0 +1,208 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ─── Midnight Fern tokens ─── */
+@layer base {
+  :root {
+    /* palette */
+    --midnight: 10, 20, 18;
+    --deep-forest: 23, 50, 46;
+    --emerald: 39, 82, 75;
+    --forest-sage: 77, 123, 115;
+    --soft-mint: 143, 184, 174;
+    --pale-mint: 220, 235, 230;
+
+    /* text */
+    --text-primary: 220, 235, 230;
+    --text-secondary: 220, 235, 230;
+    --text-tertiary: 220, 235, 230;
+
+    /* glass */
+    --glass-surface: 143, 184, 174;
+    --glass-surface-hover: 143, 184, 174;
+    --glass-border: 220, 235, 230;
+    --glass-glow-border: 143, 184, 174;
+
+    /* state */
+    --success: 117, 214, 168;
+    --error: 220, 80, 80;
+
+    /* misc */
+    --radius: 0.5rem;
+    --radius-lg: 1rem;
+    --radius-xl: 1.5rem;
+    --radius-2xl: 2rem;
+    --radius-full: 9999px;
+  }
+}
+
+/* ─── Glass system ─── */
+@layer components {
+  /* Glass Light — blur 12–18px, small cards */
+  .glass-light {
+    background: linear-gradient(
+      135deg,
+      rgba(var(--glass-surface) / 0.05),
+      rgba(var(--emerald) / 0.03)
+    );
+    backdrop-filter: blur(14px) saturate(130%);
+    -webkit-backdrop-filter: blur(14px) saturate(130%);
+    border: 1px solid rgba(var(--glass-border) / 0.12);
+    box-shadow:
+      inset 0 1px 0 rgba(var(--glass-border) / 0.12),
+      inset 0 -1px 0 rgba(var(--midnight) / 0.1),
+      0 8px 24px rgba(0, 0, 0, 0.12);
+  }
+
+  /* Glass Medium — blur 20–28px, nav, main cards */
+  .glass-medium {
+    background: linear-gradient(
+      135deg,
+      rgba(var(--glass-surface) / 0.07),
+      rgba(var(--emerald) / 0.04)
+    );
+    backdrop-filter: blur(24px) saturate(140%);
+    -webkit-backdrop-filter: blur(24px) saturate(140%);
+    border: 1px solid rgba(var(--glass-border) / 0.16);
+    box-shadow:
+      inset 0 1px 0 rgba(var(--glass-border) / 0.18),
+      inset 0 -1px 0 rgba(var(--midnight) / 0.12),
+      0 12px 40px rgba(0, 0, 0, 0.16);
+  }
+
+  /* Glass Strong — blur 30–40px, auth card, important panels */
+  .glass-strong {
+    background: linear-gradient(
+      135deg,
+      rgba(var(--glass-surface) / 0.10),
+      rgba(var(--emerald) / 0.06)
+    );
+    backdrop-filter: blur(36px) saturate(150%);
+    -webkit-backdrop-filter: blur(36px) saturate(150%);
+    border: 1px solid rgba(var(--glass-border) / 0.20);
+    box-shadow:
+      inset 0 1px 0 rgba(var(--glass-border) / 0.22),
+      inset 0 -1px 0 rgba(var(--midnight) / 0.15),
+      0 16px 56px rgba(0, 0, 0, 0.20),
+      0 0 80px rgba(var(--soft-mint) / 0.03);
+  }
+
+  /* Hover enhancement for glass */
+  .glass-hover {
+    transition: border-color 0.3s ease, background 0.3s ease, box-shadow 0.3s ease;
+  }
+  .glass-hover:hover {
+    border-color: rgba(var(--glass-glow-border) / 0.30);
+    background: linear-gradient(
+      135deg,
+      rgba(var(--glass-surface-hover) / 0.10),
+      rgba(var(--emerald) / 0.06)
+    );
+    box-shadow:
+      inset 0 1px 0 rgba(var(--glass-border) / 0.22),
+      inset 0 -1px 0 rgba(var(--midnight) / 0.15),
+      0 16px 56px rgba(0, 0, 0, 0.22),
+      0 0 60px rgba(var(--soft-mint) / 0.05);
+  }
+
+  /* Fallback for browsers without backdrop-filter */
+  @supports not (backdrop-filter: blur(1px)) {
+    .glass-light {
+      background: rgba(var(--glass-surface) / 0.08);
+    }
+    .glass-medium {
+      background: rgba(var(--glass-surface) / 0.12);
+    }
+    .glass-strong {
+      background: rgba(var(--glass-surface) / 0.16);
+    }
+  }
+}
+
+/* ─── Ambient light blobs ─── */
+@layer utilities {
+  .ambient-blob {
+    position: absolute;
+    border-radius: 50%;
+    filter: blur(80px);
+    opacity: 0.4;
+    pointer-events: none;
+    will-change: transform;
+  }
+
+  .animate-float-slow {
+    animation: float-slow 18s ease-in-out infinite;
+  }
+
+  .animate-float-medium {
+    animation: float-medium 12s ease-in-out infinite;
+  }
+
+  .animate-float-fast {
+    animation: float-fast 8s ease-in-out infinite;
+  }
+
+  .animate-mist {
+    animation: mist-drift 20s ease-in-out infinite;
+  }
+}
+
+@keyframes float-slow {
+  0%, 100% { transform: translate(0, 0) scale(1); }
+  33% { transform: translate(30px, -20px) scale(1.05); }
+  66% { transform: translate(-20px, 15px) scale(0.97); }
+}
+
+@keyframes float-medium {
+  0%, 100% { transform: translate(0, 0) scale(1); }
+  50% { transform: translate(-25px, 20px) scale(1.03); }
+}
+
+@keyframes float-fast {
+  0%, 100% { transform: translate(0, 0); }
+  25% { transform: translate(15px, -10px); }
+  50% { transform: translate(-10px, 15px); }
+  75% { transform: translate(10px, 5px); }
+}
+
+@keyframes mist-drift {
+  0%, 100% { opacity: 0.3; transform: translateX(0) translateY(0); }
+  50% { opacity: 0.5; transform: translateX(40px) translateY(-20px); }
+}
+
+/* ─── Reduced motion ─── */
+@media (prefers-reduced-motion: reduce) {
+  .animate-float-slow,
+  .animate-float-medium,
+  .animate-float-fast,
+  .animate-mist {
+    animation: none;
+  }
+}
+
+/* ─── Base ─── */
+@layer base {
+  * {
+    @apply border-border;
+  }
+  body {
+    @apply bg-[#0A1412] text-[rgba(220,235,230,0.80)] antialiased;
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+}
+
+@layer utilities {
+  .text-pale-mint { color: rgba(var(--pale-mint), var(--tw-text-opacity, 1)); }
+  .text-soft-mint { color: rgba(var(--soft-mint), var(--tw-text-opacity, 1)); }
+  .text-forest-sage { color: rgba(var(--forest-sage), var(--tw-text-opacity, 1)); }
+  .text-emerald { color: rgba(var(--emerald), var(--tw-text-opacity, 1)); }
+  .text-success { color: rgba(var(--success), var(--tw-text-opacity, 1)); }
+  .text-error { color: rgba(var(--error), var(--tw-text-opacity, 1)); }
+  .text-text-secondary { color: rgba(var(--text-secondary), 0.65); }
+  .text-text-tertiary { color: rgba(var(--text-tertiary), 0.42); }
+  .border-glass { border-color: rgba(var(--glass-border), 0.16); }
+  .border-glass-glow { border-color: rgba(var(--glass-glow-border), 0.35); }
+}
