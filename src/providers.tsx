@@ -2,6 +2,7 @@
 
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { ReactQueryDevtools } from "@tanstack/react-query-devtools";
+import { ThemeProvider as NextThemesProvider } from "next-themes";
 import { Toaster } from "sonner";
 import { type ReactNode, useState } from "react";
 
@@ -19,13 +20,13 @@ export function Providers({ children }: { children: ReactNode }) {
       })
   );
 
-  // v1 — только тёмная тема (docs/design.md §7): класс .dark хардкодит layout,
-  // ThemeProvider здесь создавал бы иллюзию переключателя. Вернётся со светлой темой.
   return (
-    <QueryClientProvider client={queryClient}>
-      {children}
-      <Toaster position="top-right" expand={true} richColors />
-      <ReactQueryDevtools initialIsOpen={false} />
-    </QueryClientProvider>
+    <NextThemesProvider attribute="class" defaultTheme="dark" enableSystem={false} forcedTheme="dark">
+      <QueryClientProvider client={queryClient}>
+        {children}
+        <Toaster position="top-right" expand={true} richColors />
+        <ReactQueryDevtools initialIsOpen={false} />
+      </QueryClientProvider>
+    </NextThemesProvider>
   );
 }

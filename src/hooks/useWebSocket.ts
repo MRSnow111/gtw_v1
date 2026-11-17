@@ -7,11 +7,18 @@ import type { ServerEvent } from "@/types/events";
 
 const SOCKET_URL = process.env.NEXT_PUBLIC_WS_URL || "http://localhost:3001";
 
+/** Демо-режим: бэкенда ещё нет — WS не подключаем, статус «подключено». */
+export const DEMO_MODE = !process.env.NEXT_PUBLIC_WS_URL;
+
 export function useWebSocket() {
   const { status, setStatus, setWs } = useWsStore();
   const socketRef = useRef<Socket | null>(null);
 
   useEffect(() => {
+    if (DEMO_MODE) {
+      setStatus("connected");
+      return;
+    }
     if (socketRef.current?.connected) return;
 
     const socket = io(SOCKET_URL, {
@@ -66,6 +73,10 @@ export function useWebSocket() {
   }, []);
 
   const sendMessage = (data: any) => {
+    if (DEMO_MODE) {
+      console.log("[WS:demo] send:", data);
+      return;
+    }
     if (socketRef.current?.connected) {
       socketRef.current.emit("message", data);
     } else {

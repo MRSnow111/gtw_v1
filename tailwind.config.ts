@@ -1,73 +1,78 @@
-import type { Config } from "tailwindcss"
+import type { Config } from "tailwindcss";
 
 const config = {
   darkMode: ["class"],
   content: [
-    './pages/**/*.{ts,tsx}',
-    './components/**/*.{ts,tsx}',
-    './app/**/*.{ts,tsx}',
-    './src/**/*.{ts,tsx}',
+    "./app/**/*.{ts,tsx}",
+    "./src/**/*.{ts,tsx}",
   ],
   prefix: "",
   theme: {
-    container: {
-      center: true,
-      padding: "2rem",
-      screens: {
-        "2xl": "1400px",
-      },
-    },
     extend: {
       colors: {
-        border: "rgba(220, 235, 230, 0.16)",
-        input: "rgba(220, 235, 230, 0.12)",
-        ring: "rgba(143, 184, 174, 0.35)",
-        background: "#0A1412",
-        foreground: "rgba(220, 235, 230, 0.80)",
+        border: "hsl(var(--border))",
+        input: "hsl(var(--input))",
+        ring: "hsl(var(--ring))",
+        background: "hsl(var(--background))",
+        foreground: "hsl(var(--foreground))",
         primary: {
-          DEFAULT: "#8FB8AE",
-          foreground: "#0A1412",
+          DEFAULT: "hsl(var(--primary))",
+          foreground: "hsl(var(--primary-foreground))",
         },
         secondary: {
-          DEFAULT: "rgba(143, 184, 174, 0.12)",
-          foreground: "rgba(220, 235, 230, 0.80)",
+          DEFAULT: "hsl(var(--secondary))",
+          foreground: "hsl(var(--secondary-foreground))",
         },
         destructive: {
-          DEFAULT: "rgba(220, 80, 80, 0.8)",
-          foreground: "rgba(220, 235, 230, 0.80)",
+          DEFAULT: "hsl(var(--destructive))",
+          foreground: "hsl(var(--destructive-foreground))",
         },
         muted: {
-          DEFAULT: "rgba(143, 184, 174, 0.08)",
-          foreground: "rgba(220, 235, 230, 0.42)",
+          DEFAULT: "hsl(var(--muted))",
+          foreground: "hsl(var(--muted-foreground))",
         },
         accent: {
-          DEFAULT: "rgba(143, 184, 174, 0.13)",
-          foreground: "rgba(220, 235, 230, 0.80)",
+          DEFAULT: "hsl(var(--accent))",
+          foreground: "hsl(var(--accent-foreground))",
         },
         popover: {
-          DEFAULT: "rgba(143, 184, 174, 0.07)",
-          foreground: "rgba(220, 235, 230, 0.80)",
+          DEFAULT: "hsl(var(--popover))",
+          foreground: "hsl(var(--popover-foreground))",
         },
         card: {
-          DEFAULT: "rgba(143, 184, 174, 0.07)",
-          foreground: "rgba(220, 235, 230, 0.80)",
+          DEFAULT: "hsl(var(--card))",
+          foreground: "hsl(var(--card-foreground))",
         },
-        // Midnight Fern palette
-        midnight: "#0A1412",
-        deepForest: "#17322E",
-        emerald: "#27524B",
-        forestSage: "#4D7B73",
-        softMint: "#8FB8AE",
-        paleMint: "#DCEBE6",
+        // Midnight Fern raw palette
+        fern: {
+          950: "#0A1412",
+          900: "#17322E",
+          800: "#27524B",
+          700: "#4D7B73",
+        },
+        mint: {
+          DEFAULT: "#8FB8AE",
+          soft: "#EFF8F5",
+        },
+        // текстовые токены (var из globals.css) — не путать с shadcn `secondary`
+        dim: "var(--text-secondary)",
+        faint: "var(--text-muted)",
+        // цветовые акценты
+        aqua: "#5ED0AE",
+        lagoon: "#8AB8E8",
+        apricot: "#E0A87E",
         success: "#75D6A8",
+      },
+      fontFamily: {
+        sans: ["var(--font-geist-sans)", "system-ui", "sans-serif"],
+        mono: ["var(--font-geist-mono)", "ui-monospace", "monospace"],
       },
       borderRadius: {
         lg: "var(--radius)",
-        md: "calc(var(--radius) - 2px)",
-        sm: "calc(var(--radius) - 4px)",
-        xl: "var(--radius-xl)",
-        "2xl": "var(--radius-2xl)",
-        full: "var(--radius-full)",
+        md: "calc(var(--radius) - 4px)",
+        sm: "calc(var(--radius) - 8px)",
+        "3xl": "1.5rem",
+        "4xl": "1.75rem",
       },
       keyframes: {
         "accordion-down": {
@@ -78,48 +83,15 @@ const config = {
           from: { height: "var(--radix-accordion-content-height)" },
           to: { height: "0" },
         },
-        "fade-in": {
-          from: { opacity: "0", transform: "translateY(12px)" },
-          to: { opacity: "1", transform: "translateY(0)" },
-        },
-        "fade-in-slow": {
-          from: { opacity: "0" },
-          to: { opacity: "1" },
-        },
-        "glow-pulse": {
-          "0%, 100%": { opacity: "0.4" },
-          "50%": { opacity: "0.7" },
-        },
-        "shimmer": {
-          "0%": { transform: "translateX(-100%)" },
-          "100%": { transform: "translateX(100%)" },
-        },
       },
       animation: {
         "accordion-down": "accordion-down 0.2s ease-out",
         "accordion-up": "accordion-up 0.2s ease-out",
-        "fade-in": "fade-in 0.6s ease-out forwards",
-        "fade-in-slow": "fade-in-slow 1.2s ease-out forwards",
-        "glow-pulse": "glow-pulse 4s ease-in-out infinite",
-        "shimmer": "shimmer 2.5s ease-in-out infinite",
-      },
-      typography: {
-        DEFAULT: {
-          css: {
-            color: "rgba(220, 235, 230, 0.7)",
-            '--tw-prose-headings': 'rgba(220, 235, 230, 0.85)',
-            '--tw-prose-body': 'rgba(220, 235, 230, 0.7)',
-            '--tw-prose-bold': 'rgba(220, 235, 230, 0.85)',
-            '--tw-prose-links': '#8FB8AE',
-            '--tw-prose-code': '#8FB8AE',
-            '--tw-prose-pre-bg': 'rgba(143, 184, 174, 0.08)',
-            '--tw-prose-pre-code': 'rgba(220, 235, 230, 0.85)',
-          },
-        },
+        "cursor-blink": "cursor-blink 1s step-end infinite",
       },
     },
   },
   plugins: [require("tailwindcss-animate")],
-} satisfies Config
+} satisfies Config;
 
-export default config
+export default config;

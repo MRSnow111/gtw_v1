@@ -1,11 +1,14 @@
 "use client";
 
+import { useParams } from "next/navigation";
 import { ChatView } from "@/components/chat/ChatView";
+import { useDemoStore } from "@/stores/demoStore";
 
-interface ChatPageProps {
-  params: { id: string };
-}
+export default function ChatPage() {
+  const params = useParams<{ id: string }>();
+  const chatId = params?.id ?? null;
+  const chats = useDemoStore((s) => s.chats);
+  const title = chats.find((c) => c.id === chatId)?.title;
 
-export default function ChatPage({ params }: ChatPageProps) {
-  return <ChatView chatId={params.id} />;
+  return <ChatView chatId={chatId} title={title} />;
 }
