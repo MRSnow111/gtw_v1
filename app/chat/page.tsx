@@ -1,36 +1,56 @@
 "use client";
 
-import { Plus, MessageSquare } from "lucide-react";
-import { GlassButton } from "@/components/ui/GlassButton";
-import { useChatStore } from "@/stores/chatStore";
+import { ChatHeader } from "@/components/chat/ChatHeader";
+import { Composer } from "@/components/chat/Composer";
+import { Code2, Terminal, BarChart3, FileText, Leaf } from "lucide-react";
+import { useRouter } from "next/navigation";
 
-export default function ChatListPage() {
-  const { setActiveChat } = useChatStore();
+const SUGGESTIONS = [
+  { icon: Code2, title: "Написать код", caption: "Разработка и отладка" },
+  { icon: Terminal, title: "Работа с сервером", caption: "Команды и инструменты" },
+  { icon: BarChart3, title: "Анализ данных", caption: "Визуализация и отчёты" },
+  { icon: FileText, title: "Работа с файлами", caption: "Обработка и поиск" },
+];
+
+// Пустое состояние центра по референсу: «Чем займёмся?» + сетка 2×2 + композер.
+export default function ChatWelcomePage() {
+  const router = useRouter();
 
   return (
-    <div className="flex-1 flex flex-col items-center justify-center p-4 text-center">
-      <div className="w-full max-w-md space-y-4">
-        <div className="glass-strong rounded-2xl p-8 text-center glass-hover">
-          <div className="inline-flex items-center justify-center w-14 h-14 rounded-xl glass-light mb-4">
-            <MessageSquare className="h-6 w-6 text-[rgba(143,184,174,0.6)]" />
+    <>
+      <ChatHeader chatId="new" />
+
+      <div className="relative flex flex-1 flex-col items-center justify-center overflow-y-auto px-6 pb-4">
+        <div className="flex w-full max-w-2xl flex-col items-center text-center">
+          <div className="mb-5 flex h-20 w-20 items-center justify-center rounded-[22px] border border-white/12 bg-white/[0.06] shadow-[0_10px_30px_rgba(0,0,0,0.25)]">
+            <Leaf className="h-9 w-9 accent" strokeWidth={1.6} />
           </div>
-          <h2 className="text-xl font-semibold text-[rgba(220,235,230,0.85)] mb-2">
-            Добро пожаловать
-          </h2>
-          <p className="text-sm text-[rgba(220,235,230,0.42)] mb-6">
-            Выберите чат из боковой панели или создайте новый
+          <h1 className="mb-2 text-[30px] font-medium text-1">Чем займёмся?</h1>
+          <p className="mb-8 text-[15px] text-2">
+            Ваш персональный AI-агент готов к работе
           </p>
-          <GlassButton
-            variant="primary"
-            size="md"
-            className="w-full"
-            onClick={() => setActiveChat("new")}
-            icon={<Plus className="h-4 w-4" />}
-          >
-            Новый чат
-          </GlassButton>
+
+          <div className="grid w-full grid-cols-1 gap-4 sm:grid-cols-2">
+            {SUGGESTIONS.map(({ icon: Icon, title, caption }) => (
+              <button
+                key={title}
+                onClick={() => router.push("/chat")}
+                className="flex items-center gap-4 rounded-2xl border border-white/[0.08] bg-white/[0.05] p-4 text-left transition-colors hover:border-[rgba(110,231,168,0.30)] hover:bg-white/[0.08]"
+              >
+                <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-[rgba(110,231,168,0.14)]">
+                  <Icon className="h-5 w-5 text-[#A7E8C3]" strokeWidth={1.8} />
+                </span>
+                <span>
+                  <span className="block text-[15px] font-medium text-1">{title}</span>
+                  <span className="block text-[13px] text-2">{caption}</span>
+                </span>
+              </button>
+            ))}
+          </div>
         </div>
       </div>
-    </div>
+
+      <Composer chatId="new" />
+    </>
   );
 }

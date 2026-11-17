@@ -1,49 +1,42 @@
 "use client";
 
 import { useWsStore } from "@/stores/wsStore";
-import { MoreHorizontal, Wifi, WifiOff, RefreshCw } from "lucide-react";
-import { Button } from "@/components/ui/button";
+import { Copy, Maximize2, RefreshCw } from "lucide-react";
 
+// Верхняя строка центра: статус-пилюля + круглые иконки-кнопки (референс).
 export function ChatHeader({ chatId }: { chatId: string }) {
   const status = useWsStore((s) => s.status);
 
-  // TODO: имя чата и модель — с сервера (docs/design.md §9, чат-метаданные).
+  const pill =
+    status === "connected"
+      ? { dot: "bg-[#6EE7A8] shadow-[0_0_8px_rgba(110,231,168,0.9)] animate-pulse", label: "Подключено к агенту" }
+      : status === "reconnecting"
+        ? { dot: "bg-[rgba(230,200,120,0.9)]", label: "Переподключение…" }
+        : { dot: "bg-[rgba(220,80,80,0.85)]", label: "Нет соединения" };
+
   return (
-    <header className="flex h-14 shrink-0 items-center justify-between border-b border-[rgba(220,235,230,0.08)] px-4">
-      <div className="flex items-center gap-2">
-        <span className="font-medium text-[rgba(220,235,230,0.85)]">
-          Анализ отчёта
-        </span>
-        <span className="text-xs text-[rgba(220,235,230,0.3)]">|</span>
-        <span className="text-xs text-[rgba(143,184,174,0.7)]">
-          hermes-fast
-        </span>
+    <header className="relative flex h-16 shrink-0 items-center justify-between px-5 pt-1">
+      <div className="flex items-center gap-2 rounded-full border border-white/[0.08] bg-white/[0.06] px-3.5 py-1.5">
+        <span className={`h-2 w-2 rounded-full ${pill.dot}`} />
+        <span className="text-[13px] text-2">{pill.label}</span>
+        {status === "reconnecting" && (
+          <RefreshCw className="h-3 w-3 animate-spin text-[rgba(230,200,120,0.8)]" />
+        )}
       </div>
 
-      {/* Индикатор соединения: только показывает, не переключается кликом.
-          При disconnect/plane — баннер над композером (docs/design.md §4). */}
-      <div className="flex items-center gap-1">
-        <span className="mr-1 text-[11px] text-[rgba(220,235,230,0.35)]">
-          {status === "connected"
-            ? "онлайн"
-            : status === "reconnecting"
-              ? "переподключение…"
-              : "нет соединения"}
-        </span>
-        {status === "connected" ? (
-          <Wifi className="h-4 w-4 text-[#75D6A8]" />
-        ) : status === "reconnecting" ? (
-          <RefreshCw className="h-4 w-4 animate-spin text-[rgba(230,200,120,0.8)]" />
-        ) : (
-          <WifiOff className="h-4 w-4 text-[rgba(220,80,80,0.7)]" />
-        )}
-        <Button
-          variant="ghost"
-          size="icon"
-          className="text-[rgba(220,235,230,0.5)] hover:bg-[rgba(143,184,174,0.08)] hover:text-[rgba(220,235,230,0.9)]"
+      <div className="flex items-center gap-2">
+        <button
+          className="flex h-9 w-9 items-center justify-center rounded-full border border-white/[0.08] bg-white/[0.05] text-2 transition-colors hover:bg-white/[0.10] hover:text-1"
+          title="Копировать переписку"
         >
-          <MoreHorizontal className="h-4 w-4" />
-        </Button>
+          <Copy className="h-4 w-4" strokeWidth={1.8} />
+        </button>
+        <button
+          className="flex h-9 w-9 items-center justify-center rounded-full border border-white/[0.08] bg-white/[0.05] text-2 transition-colors hover:bg-white/[0.10] hover:text-1"
+          title="Развернуть"
+        >
+          <Maximize2 className="h-4 w-4" strokeWidth={1.8} />
+        </button>
       </div>
     </header>
   );

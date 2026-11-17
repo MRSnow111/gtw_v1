@@ -15,9 +15,8 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="ru" suppressHydrationWarning className="dark">
-      <body
-        className={`${GeistSans.variable} font-sans antialiased bg-[#0A1412]`}
-      >
+      <body className={`${GeistSans.variable} font-sans antialiased bg-[#0A1410]`}>
+        <div className="forest-bg" aria-hidden />
         <Providers>{children}</Providers>
       </body>
     </html>

@@ -10,7 +10,7 @@ interface ChatViewProps {
 
 export function ChatView({ chatId }: ChatViewProps) {
   return (
-    <div className="flex-1 flex flex-col h-full glass-medium overflow-hidden">
+    <div className="flex h-full min-h-0 flex-col">
       <ChatHeader chatId={chatId} />
       <MessageList chatId={chatId} />
       <Composer chatId={chatId} />
