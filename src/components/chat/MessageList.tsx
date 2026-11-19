@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useRef } from "react";
 import { motion } from "framer-motion";
 import { RefreshCw } from "lucide-react";
-import { useDemoStore } from "@/stores/demoStore";
+import { useAgentStore } from "@/stores/agentStore";
 import { AgentTurn, UserTurn } from "@/components/chat/TurnComponents";
 import { WelcomeScreen } from "@/components/chat/WelcomeScreen";
 
@@ -31,7 +31,7 @@ interface MessageListProps {
 }
 
 export function MessageList({ chatId }: MessageListProps) {
-  const { turnsByChat, loadingChats, chats, loadTurns } = useDemoStore();
+  const { turnsByChat, loadingChats, chats, loadTurns } = useAgentStore();
   const bottomRef = useRef<HTMLDivElement>(null);
 
   const turns = chatId ? turnsByChat[chatId] : undefined;
@@ -45,9 +45,14 @@ export function MessageList({ chatId }: MessageListProps) {
     if (chatId && !turns && !loadingChats[chatId]) loadTurns(chatId);
   }, [chatId, turns, loadingChats, loadTurns]);
 
+  /* автоскролл: новые ходы, стриминг ответа, появление approval/clarify/tool-карточек */
+  const last = turns?.[turns.length - 1];
+  const scrollKey = last
+    ? `${last.id}:${last.revealed}:${last.agentState}:${last.approval?.id ?? ""}:${last.approval?.state ?? ""}:${last.clarify?.id ?? ""}:${last.clarify?.state ?? ""}:${last.tools?.length ?? 0}`
+    : "";
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
-  }, [turns?.length, turns?.[turns.length - 1]?.revealed]);
+  }, [turns?.length, scrollKey]);
 
   /* несуществующий чат */
   if (chatId && !chatExists) {

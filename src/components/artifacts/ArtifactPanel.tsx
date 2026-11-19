@@ -8,7 +8,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
-import { useDemoStore } from "@/stores/demoStore";
+import { useAgentStore } from "@/stores/agentStore";
 import type { Artifact } from "@/lib/demoData";
 import { GlassBadge, IconButton } from "@/components/ui/glass";
 
@@ -105,7 +105,7 @@ function CodeViewer({ artifact }: { artifact: Artifact }) {
 /* ─────────── панель ─────────── */
 
 export function ArtifactPanel({ className }: { className?: string }) {
-  const { artifacts, activeChatId, retryArtifact } = useDemoStore();
+  const { artifacts, activeChatId, retryArtifact } = useAgentStore();
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [lightbox, setLightbox] = useState(false);
 

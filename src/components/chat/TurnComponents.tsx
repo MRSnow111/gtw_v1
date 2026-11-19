@@ -4,14 +4,14 @@ import { useState } from "react";
 import { motion } from "framer-motion";
 import {
   Ban, Check, CheckCheck, ChevronDown, ChevronRight, Clock3, Copy,
-  FileCode2, FileSearch, FileText, Globe, Loader2, Pencil, RefreshCw,
+  FileCode2, FileSearch, FileText, Globe, HelpCircle, Loader2, Pencil,
   ShieldAlert, Terminal, X,
 } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import type { Approval, ToolCall, Turn } from "@/lib/demoData";
 import { MarkdownRenderer } from "@/components/chat/MarkdownRenderer";
-import { useDemoStore } from "@/stores/demoStore";
+import { useAgentStore } from "@/stores/agentStore";
 
 /* ─────────── ход пользователя ─────────── */
 
@@ -80,7 +80,7 @@ export function UserTurn({ turn }: { turn: Turn }) {
           <Copy className="h-3 w-3" /> Копировать
         </button>
         <button
-          onClick={() => toast.info("Редактирование появится вместе с бэкендом")}
+          onClick={() => toast.info("Редактирование сообщений появится позже")}
           className="flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[11px] text-[rgba(220,235,230,0.6)] hover:bg-white/[0.06] hover:text-foreground"
         >
           <Pencil className="h-3 w-3" /> Изменить
@@ -181,13 +181,27 @@ function ToolRow({ call }: { call: ToolCall }) {
 
 /* ─────────── approval ─────────── */
 
+const CHOICE_RU: Record<string, string> = {
+  once: "Разрешить",
+  session: "В этой сессии",
+  always: "Всегда",
+  deny: "Отклонить",
+};
+
 export function ApprovalBlock({ turn, chatId }: { turn: Turn; chatId: string }) {
-  const decide = useDemoStore((s) => s.decide);
+  const decide = useAgentStore((s) => s.decide);
   const ap = turn.approval as Approval;
-  const [comment, setComment] = useState("");
   if (!ap) return null;
 
   if (ap.state === "pending") {
+    const actions = ap.actions?.length
+      ? ap.actions
+      : [
+          { label: "Разрешить", choice: "once" },
+          { label: "Отклонить", choice: "deny" },
+        ];
+    const primary = actions.find((a) => a.choice === "once") || actions.find((a) => a.choice !== "deny");
+    const rest = actions.filter((a) => a !== primary);
     return (
       <motion.div
         initial={{ opacity: 0, y: 8 }}
@@ -204,31 +218,32 @@ export function ApprovalBlock({ turn, chatId }: { turn: Turn; chatId: string }) 
         <pre className="scroll-area overflow-x-auto rounded-xl border border-white/[0.08] bg-fern-950/60 p-3 font-mono text-[12px] text-[rgba(220,235,230,0.95)]">
           {ap.command}
         </pre>
-        <input
-          value={comment}
-          onChange={(e) => setComment(e.target.value)}
-          placeholder="Комментарий (необязательно)"
-          className="glass-light mt-2.5 w-full rounded-xl px-3 py-2 text-[12.5px] outline-none placeholder:text-[rgba(220,235,230,0.52)] focus:border-mint/40"
-        />
-        <div className="mt-3 flex gap-2">
-          <button
-            onClick={() => {
-              decide(chatId, turn.id, ap.id, "allow", comment || undefined);
-              toast.success("Разрешено юзером");
-            }}
-            className="flex-1 rounded-xl bg-mint py-2 text-[13px] font-medium text-fern-950 transition-all hover:shadow-[0_0_20px_rgba(143,184,174,0.35)]"
-          >
-            Подтвердить
-          </button>
-          <button
-            onClick={() => {
-              decide(chatId, turn.id, ap.id, "deny", comment || undefined);
-              toast.info("Отклонено");
-            }}
-            className="rounded-xl border border-white/[0.12] px-4 py-2 text-[13px] text-dim transition-colors hover:bg-white/[0.06] hover:text-foreground"
-          >
-            Отклонить
-          </button>
+        {ap.description && (
+          <p className="mt-2 text-[12px] leading-relaxed text-[rgba(220,235,230,0.66)]">{ap.description}</p>
+        )}
+        <div className="mt-3 flex flex-wrap gap-2">
+          {primary && (
+            <button
+              onClick={() => decide(chatId, turn.id, ap.id, primary.choice)}
+              className="min-w-[140px] flex-1 rounded-xl bg-mint py-2 text-[13px] font-medium text-fern-950 transition-all hover:shadow-[0_0_20px_rgba(143,184,174,0.35)]"
+            >
+              {CHOICE_RU[primary.choice] || primary.label}
+            </button>
+          )}
+          {rest.map((a) => (
+            <button
+              key={a.choice}
+              onClick={() => decide(chatId, turn.id, ap.id, a.choice)}
+              className={cn(
+                "rounded-xl border px-4 py-2 text-[13px] transition-colors",
+                a.choice === "deny"
+                  ? "border-white/[0.12] text-dim hover:bg-white/[0.06] hover:text-foreground"
+                  : "border-mint/25 text-mint hover:bg-mint/[0.08]"
+              )}
+            >
+              {CHOICE_RU[a.choice] || a.label}
+            </button>
+          ))}
         </div>
       </motion.div>
     );
@@ -265,6 +280,101 @@ export function ApprovalBlock({ turn, chatId }: { turn: Turn; chatId: string }) 
   );
 }
 
+/* ─────────── clarify (вопрос агента) ─────────── */
+
+export function ClarifyBlock({ turn, chatId }: { turn: Turn; chatId: string }) {
+  const answerClarify = useAgentStore((s) => s.answerClarify);
+  const cl = turn.clarify;
+  const [selected, setSelected] = useState<string[]>([]);
+  const [text, setText] = useState("");
+  if (!cl) return null;
+
+  if (cl.state === "answered") {
+    return (
+      <div className="flex items-center gap-2 rounded-xl border border-mint/25 bg-mint/[0.06] px-3 py-2 text-[12px] text-mint">
+        <Check className="h-3.5 w-3.5 shrink-0" />
+        <span className="truncate">Ответ: {cl.answer}</span>
+      </div>
+    );
+  }
+
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 8 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.3, ease: [0.22, 1, 0.36, 1] }}
+      className="rounded-2xl border border-sky-300/30 bg-sky-400/[0.07] p-4 shadow-[inset_0_1px_0_rgba(125,211,252,0.1)]"
+    >
+      <div className="mb-2.5 flex items-center gap-2">
+        <HelpCircle className="h-4 w-4 text-sky-300" />
+        <span className="text-[13px] font-medium text-sky-200/90">Агент уточняет</span>
+      </div>
+      <div className="text-[13px] leading-relaxed text-foreground">{cl.question}</div>
+
+      {cl.choices.length === 0 ? (
+        <div className="mt-3 flex gap-2">
+          <input
+            value={text}
+            onChange={(e) => setText(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && text.trim()) answerClarify(chatId, turn.id, cl.id, text.trim());
+            }}
+            placeholder="Ваш ответ…"
+            className="glass-light flex-1 rounded-xl px-3 py-2 text-[12.5px] outline-none placeholder:text-[rgba(220,235,230,0.52)] focus:border-mint/40"
+          />
+          <button
+            disabled={!text.trim()}
+            onClick={() => answerClarify(chatId, turn.id, cl.id, text.trim())}
+            className="rounded-xl bg-mint px-4 py-2 text-[13px] font-medium text-fern-950 disabled:opacity-40"
+          >
+            Ответить
+          </button>
+        </div>
+      ) : cl.multiSelect ? (
+        <>
+          <div className="mt-3 flex flex-col gap-1.5">
+            {cl.choices.map((c) => (
+              <label
+                key={c}
+                className="glass-light flex cursor-pointer items-center gap-2.5 rounded-xl px-3 py-2 text-[12.5px] text-foreground"
+              >
+                <input
+                  type="checkbox"
+                  checked={selected.includes(c)}
+                  onChange={() =>
+                    setSelected((s) => (s.includes(c) ? s.filter((x) => x !== c) : [...s, c]))
+                  }
+                  className="accent-mint"
+                />
+                {c}
+              </label>
+            ))}
+          </div>
+          <button
+            disabled={selected.length === 0}
+            onClick={() => answerClarify(chatId, turn.id, cl.id, selected.join(", "))}
+            className="mt-3 w-full rounded-xl bg-mint py-2 text-[13px] font-medium text-fern-950 disabled:opacity-40"
+          >
+            Ответить
+          </button>
+        </>
+      ) : (
+        <div className="mt-3 flex flex-wrap gap-2">
+          {cl.choices.map((c) => (
+            <button
+              key={c}
+              onClick={() => answerClarify(chatId, turn.id, cl.id, c)}
+              className="glass-light rounded-xl px-3.5 py-2 text-[12.5px] text-foreground transition-colors hover:border-mint/40 hover:bg-mint/[0.08]"
+            >
+              {c}
+            </button>
+          ))}
+        </div>
+      )}
+    </motion.div>
+  );
+}
+
 /* ─────────── ход агента ─────────── */
 
 export function AgentTurn({ turn, chatId }: { turn: Turn; chatId: string }) {
@@ -281,19 +391,21 @@ export function AgentTurn({ turn, chatId }: { turn: Turn; chatId: string }) {
       transition={{ duration: 0.25, ease: [0.22, 1, 0.36, 1] }}
       className="group/turn flex flex-col gap-2.5"
     >
-      {/* thinking */}
-      <div className="flex items-center gap-2 text-[12px]">
-        {turn.thinkingMs === null ? (
-          <>
-            <Loader2 className="h-3 w-3 animate-spin text-mint" />
-            <span className="text-[rgba(220,235,230,0.66)]">Думает…</span>
-          </>
-        ) : (
-          <span className="text-[rgba(220,235,230,0.6)]">
-            Думал {((turn.thinkingMs || 0) / 1000).toFixed(1)}с
-          </span>
-        )}
-      </div>
+      {/* thinking (у ходов из истории без замера времени строку не показываем) */}
+      {(turn.agentState === "running" || (turn.thinkingMs ?? 0) > 0) && (
+        <div className="flex items-center gap-2 text-[12px]">
+          {turn.thinkingMs === null || turn.thinkingMs === undefined ? (
+            <>
+              <Loader2 className="h-3 w-3 animate-spin text-mint" />
+              <span className="text-[rgba(220,235,230,0.66)]">Думает…</span>
+            </>
+          ) : (
+            <span className="text-[rgba(220,235,230,0.6)]">
+              Думал {(turn.thinkingMs / 1000).toFixed(1)}с
+            </span>
+          )}
+        </div>
+      )}
 
       {/* tool-вызовы */}
       {turn.tools && turn.tools.length > 0 && (
@@ -317,6 +429,9 @@ export function AgentTurn({ turn, chatId }: { turn: Turn; chatId: string }) {
       {/* approval */}
       {turn.approval && <ApprovalBlock turn={turn} chatId={chatId} />}
 
+      {/* clarify */}
+      {turn.clarify && <ClarifyBlock turn={turn} chatId={chatId} />}
+
       {/* остановлен */}
       {turn.agentState === "cancelled" && (
         <div className="flex items-center gap-2 text-[12px] text-[rgba(220,235,230,0.6)]">
@@ -325,16 +440,20 @@ export function AgentTurn({ turn, chatId }: { turn: Turn; chatId: string }) {
       )}
 
       {/* служебная строка */}
-      {turn.usage && turn.agentState === "done" && (
+      {turn.agentState === "done" && (
         <div className="group/meta flex items-center gap-2 text-[11px] text-[rgba(220,235,230,0.52)]">
           <span>
             {new Date(turn.createdAt).toLocaleTimeString("ru", { hour: "2-digit", minute: "2-digit" })}
           </span>
-          <span>·</span>
-          <span>↑ {Math.round(turn.usage.inTokens)} ток.</span>
-          <span>↓ {Math.round(turn.usage.outTokens)} ток.</span>
-          <span>·</span>
-          <span>{(turn.usage.durationMs / 1000).toFixed(1)}с</span>
+          {turn.usage && (
+            <>
+              <span>·</span>
+              <span>↑ {Math.round(turn.usage.inTokens)} ток.</span>
+              <span>↓ {Math.round(turn.usage.outTokens)} ток.</span>
+              <span>·</span>
+              <span>{(turn.usage.durationMs / 1000).toFixed(1)}с</span>
+            </>
+          )}
           <span
             className={cn(
               "flex gap-1 transition-opacity duration-200",
@@ -349,12 +468,6 @@ export function AgentTurn({ turn, chatId }: { turn: Turn; chatId: string }) {
               className="flex items-center gap-1 rounded px-1.5 py-0.5 hover:bg-white/[0.06] hover:text-foreground"
             >
               <Copy className="h-3 w-3" /> Копировать
-            </button>
-            <button
-              onClick={() => toast.info("Регенерация появится вместе с бэкендом")}
-              className="flex items-center gap-1 rounded px-1.5 py-0.5 hover:bg-white/[0.06] hover:text-foreground"
-            >
-              <RefreshCw className="h-3 w-3" /> Регенерировать
             </button>
           </span>
         </div>

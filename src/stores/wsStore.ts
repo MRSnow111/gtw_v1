@@ -1,13 +1,12 @@
 import { create } from "zustand";
-import type { Socket } from "socket.io-client";
 
 export type WsStatus = "connecting" | "connected" | "reconnecting" | "disconnected";
 
 interface WsStore {
   status: WsStatus;
-  ws: Socket | null;
+  ws: WebSocket | null;
   setStatus: (status: WsStatus) => void;
-  setWs: (ws: Socket | null) => void;
+  setWs: (ws: WebSocket | null) => void;
 }
 
 export const useWsStore = create<WsStore>((set) => ({

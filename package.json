@@ -4,8 +4,9 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
+    "dev:ws": "NODE_ENV=development node server.js",
     "build": "next build",
-    "start": "next start",
+    "start": "NODE_ENV=production node server.js",
     "lint": "next lint"
   },
   "dependencies": {
@@ -31,10 +32,10 @@
     "react": "^19.3.1",
     "react-dom": "^19.3.1",
     "react-dropzone": "^14.2.3",
-    "socket.io-client": "^4.7.5",
     "sonner": "^2.0.8",
     "tailwind-merge": "^2.4.0",
     "tailwindcss-animate": "^1.0.7",
+    "ws": "^8.23.0",
     "zod": "^3.23.8",
     "zustand": "^4.5.4"
   },

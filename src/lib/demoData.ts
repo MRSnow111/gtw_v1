@@ -21,6 +21,17 @@ export interface Approval {
   command: string;
   state: ApprovalState;
   comment?: string;
+  description?: string;
+  actions?: { label: string; choice: string; style?: string }[];
+}
+
+export interface Clarify {
+  id: string;
+  question: string;
+  choices: string[];
+  multiSelect?: boolean;
+  state: "pending" | "answered";
+  answer?: string;
 }
 
 export interface UserAttachment {
@@ -41,11 +52,13 @@ export interface Turn {
   status?: "pending" | "done" | "error" | "cancelled";
 
   // agent turn
+  messageId?: string; // id сообщения шлюза (для message_edit)
   thinkingMs?: number | null; // null = ещё думает
   tools?: ToolCall[];
   answer?: string;
   revealed?: number; // сколько символов ответа показано (стриминг)
   approval?: Approval;
+  clarify?: Clarify;
   usage?: { inTokens: number; outTokens: number; durationMs: number };
   agentState?: "running" | "done" | "cancelled" | "error";
 }

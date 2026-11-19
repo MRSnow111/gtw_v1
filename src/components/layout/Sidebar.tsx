@@ -12,7 +12,7 @@ import {
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { useAuthStore } from "@/stores/authStore";
-import { useDemoStore } from "@/stores/demoStore";
+import { useAgentStore } from "@/stores/agentStore";
 import { useUiStore } from "@/stores/uiStore";
 import { groupChats, type DemoChat } from "@/lib/demoData";
 import { IconButton, GlassBadge } from "@/components/ui/glass";
@@ -38,7 +38,7 @@ interface SidebarProps {
 
 export function Sidebar({ className, onNavigate }: SidebarProps) {
   const router = useRouter();
-  const { chats, turnsByChat, activeChatId, setActiveChat, renameChat, deleteChat, createChat } = useDemoStore();
+  const { chats, turnsByChat, activeChatId, setActiveChat, renameChat, deleteChat, createChat } = useAgentStore();
   const { setSettingsOpen, setDrawerOpen } = useUiStore();
   const logout = useAuthStore((s) => s.logout);
 

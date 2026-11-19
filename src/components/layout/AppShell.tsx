@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import { Menu } from "lucide-react";
 import { useUiStore } from "@/stores/uiStore";
+import { useWebSocket } from "@/hooks/useWebSocket";
 import { Sidebar } from "@/components/layout/Sidebar";
 import { ArtifactPanel } from "@/components/artifacts/ArtifactPanel";
 import { SettingsModal } from "@/components/settings/SettingsModal";
@@ -16,6 +17,7 @@ import { cn } from "@/lib/utils";
 export function AppShell({ children }: { children: React.ReactNode }) {
   const { drawerOpen, setDrawerOpen } = useUiStore();
   const [mounted, setMounted] = useState(false);
+  useWebSocket(); // держит WS-соединение с прокси /ws (live-режим)
 
   useEffect(() => setMounted(true), []);
 

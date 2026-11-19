@@ -9,7 +9,7 @@ import {
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { useWsStore } from "@/stores/wsStore";
-import { useDemoStore } from "@/stores/demoStore";
+import { useAgentStore, DEMO_MODE } from "@/stores/agentStore";
 import { useUiStore } from "@/stores/uiStore";
 import type { UserAttachment } from "@/lib/demoData";
 
@@ -23,8 +23,8 @@ const LINE_H = 20;
 export function Composer({ chatId }: ComposerProps) {
   const router = useRouter();
   const status = useWsStore((s) => s.status);
-  const commands = useDemoStore((s) => s.commands);
-  const running = useDemoStore((s) => {
+  const commands = useAgentStore((s) => s.commands);
+  const running = useAgentStore((s) => {
     if (!chatId) return false;
     const turns = s.turnsByChat[chatId];
     const last = turns?.[turns.length - 1];
@@ -73,7 +73,7 @@ export function Composer({ chatId }: ComposerProps) {
     if (!trimmed || running) return;
     setText("");
     setAttachments([]);
-    const store = useDemoStore.getState();
+    const store = useAgentStore.getState();
     if (chatId) {
       store.sendMessage(chatId, trimmed);
     } else {
@@ -81,6 +81,18 @@ export function Composer({ chatId }: ComposerProps) {
       store.setActiveChat(id);
       router.push(`/chat/${id}`);
     }
+  };
+
+  const doStop = () => {
+    const store = useAgentStore.getState();
+    let id: string | null | undefined = chatId;
+    if (!id) {
+      // первое сообщение с welcome-экрана: переход на /chat/[id] ещё мог не завершиться
+      id = Object.entries(store.turnsByChat).find(([, ts]) =>
+        ts.some((t) => t.kind === "agent" && t.agentState === "running")
+      )?.[0];
+    }
+    if (id) store.stop(id);
   };
 
   const onKeyDown = (e: React.KeyboardEvent) => {
@@ -107,8 +119,12 @@ export function Composer({ chatId }: ComposerProps) {
     }
   };
 
-  /* демо-загрузка файлов */
-  const addDemoFile = () => {
+  /* загрузка файлов: в live-режиме появится позже, в демо — имитация */
+  const addFile = () => {
+    if (!DEMO_MODE) {
+      toast.info("Загрузка файлов появится в следующей версии");
+      return;
+    }
     const n = attachments.length + 1;
     const att: UserAttachment = {
       name: `document_${n}.pdf`,
@@ -194,7 +210,7 @@ export function Composer({ chatId }: ComposerProps) {
           onDrop={(e) => {
             e.preventDefault();
             setDragOver(false);
-            addDemoFile();
+            addFile();
           }}
           className={cn(
             "glass-medium relative rounded-[24px] p-3 transition-all duration-200",
@@ -260,14 +276,14 @@ export function Composer({ chatId }: ComposerProps) {
           <div className="mt-1 flex items-center justify-between">
             <div className="flex gap-1">
               <button
-                onClick={addDemoFile}
+                onClick={addFile}
                 className="flex h-8 w-8 items-center justify-center rounded-full text-[rgba(220,235,230,0.7)] transition-colors hover:bg-white/[0.06] hover:text-foreground"
                 aria-label="Прикрепить файл"
               >
                 <Paperclip className="h-4 w-4" />
               </button>
               <button
-                onClick={addDemoFile}
+                onClick={addFile}
                 className="flex h-8 w-8 items-center justify-center rounded-full text-[rgba(220,235,230,0.7)] transition-colors hover:bg-white/[0.06] hover:text-foreground"
                 aria-label="Загрузить файл"
               >
@@ -276,7 +292,7 @@ export function Composer({ chatId }: ComposerProps) {
             </div>
             <motion.button
               whileTap={{ scale: 0.92 }}
-              onClick={generating ? () => chatId && useDemoStore.getState().stop(chatId) : doSend}
+              onClick={generating ? doStop : doSend}
               disabled={!generating && (!text.trim() || offline)}
               className={cn(
                 "flex h-9 w-9 items-center justify-center rounded-full transition-all duration-200",

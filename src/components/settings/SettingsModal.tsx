@@ -6,11 +6,12 @@ import { toast } from "sonner";
 import { useAuthStore } from "@/stores/authStore";
 import { useUiStore } from "@/stores/uiStore";
 import { useWsStore } from "@/stores/wsStore";
-import { DEMO_MODE } from "@/hooks/useWebSocket";
+import { DEMO_MODE } from "@/stores/agentStore";
+import { gtwSocket } from "@/lib/gtwSocket";
 import { DEMO_USER } from "@/lib/demoData";
 import { IconButton, GlassBadge, StatusDot } from "@/components/ui/glass";
 
-const WS_URL = process.env.NEXT_PUBLIC_WS_URL || "demo";
+const WS_URL = DEMO_MODE ? "demo" : "/ws → GTW-адаптер";
 
 export function SettingsModal() {
   const { settingsOpen, setSettingsOpen } = useUiStore();
@@ -90,11 +91,15 @@ export function SettingsModal() {
                 </div>
               </div>
               <button
-                onClick={() =>
-                  toast[DEMO_MODE ? "info" : "success"](
-                    DEMO_MODE ? "Демо-режим: переподключение не требуется" : "Переподключаюсь…"
-                  )
-                }
+                onClick={() => {
+                  if (DEMO_MODE) {
+                    toast.info("Демо-режим: переподключение не требуется");
+                    return;
+                  }
+                  gtwSocket.stop();
+                  gtwSocket.start();
+                  toast.success("Переподключаюсь…");
+                }}
                 className="glass-light mt-3 flex w-full items-center justify-center gap-2 rounded-xl py-2 text-[13px] text-dim transition-colors hover:text-foreground"
               >
                 <RefreshCw className="h-3.5 w-3.5" />

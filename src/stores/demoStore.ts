@@ -42,7 +42,7 @@ function patchTurn(chatId: string, turnId: string, patch: Partial<Turn> | ((t: T
   }));
 }
 
-interface DemoState {
+export interface DemoState {
   chats: DemoChat[];
   turnsByChat: Record<string, Turn[]>;
   artifacts: Artifact[];
@@ -55,7 +55,8 @@ interface DemoState {
   sendMessage: (chatId: string, text: string) => void;
   startChatWithMessage: (text: string) => string;
   stop: (chatId: string) => void;
-  decide: (chatId: string, turnId: string, approvalId: string, decision: "allow" | "deny", comment?: string) => void;
+  decide: (chatId: string, turnId: string, approvalId: string, choice: string, comment?: string) => void;
+  answerClarify: (chatId: string, turnId: string, clarifyId: string, response: string) => void;
   createChat: () => DemoChat;
   renameChat: (id: string, title: string) => void;
   deleteChat: (id: string) => void;
@@ -136,11 +137,17 @@ export const useDemoStore = create<DemoState>((set, get) => ({
     }
   },
 
-  decide: (chatId, turnId, approvalId, decision, comment) => {
+  decide: (chatId, turnId, approvalId, choice, comment) => {
     patchTurn(chatId, turnId, (t) => ({
       approval: t.approval
-        ? { ...t.approval, state: decision === "allow" ? "allowed" : "denied", comment }
+        ? { ...t.approval, state: choice === "deny" ? "denied" : "allowed", comment }
         : t.approval,
+    }));
+  },
+
+  answerClarify: (chatId, turnId, clarifyId, response) => {
+    patchTurn(chatId, turnId, (t) => ({
+      clarify: t.clarify ? { ...t.clarify, state: "answered" as const, answer: response } : t.clarify,
     }));
   },
 
