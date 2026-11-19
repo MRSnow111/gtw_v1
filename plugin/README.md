@@ -12,6 +12,7 @@ mkdir -p ~/.hermes/plugins/gtw
 cd ~/.hermes/plugins/gtw
 curl -fsSL https://raw.githubusercontent.com/MRSnow111/gtw_v1/main/plugin/plugin.yaml -o plugin.yaml
 curl -fsSL https://raw.githubusercontent.com/MRSnow111/gtw_v1/main/plugin/adapter.py -o adapter.py
+curl -fsSL https://raw.githubusercontent.com/MRSnow111/gtw_v1/main/plugin/__init__.py -o __init__.py
 
 # 2. Токен WS-эндпоинта (секрет; Next.js-сервер будет прикреплять его к проксируемым WS)
 echo "GTW_TOKEN=$(openssl rand -hex 32)" >> ~/.hermes/.env
