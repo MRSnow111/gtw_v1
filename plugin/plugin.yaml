@@ -1,0 +1,36 @@
+name: gtw-platform
+label: GTW
+kind: platform
+version: 0.1.0
+description: >
+  GTW (Gateway To Hermes) web-chat adapter. Runs a local WebSocket server
+  inside the Hermes gateway; the GTW Next.js frontend connects to it
+  (directly or proxied) and exchanges messages, streaming drafts,
+  tool-progress, approval/clarify cards and artifacts with the agent.
+author: MRSnow111
+requires_env:
+  - name: GTW_TOKEN
+    description: "Shared secret for the GTW WebSocket endpoint (Next.js server attaches it; never exposed to the browser)"
+    prompt: "GTW WS token"
+    password: true
+optional_env:
+  - name: GTW_PORT
+    description: "WebSocket server port (default: 8765)"
+    prompt: "GTW port"
+    password: false
+  - name: GTW_BIND
+    description: "Bind address (default: 127.0.0.1 — keep loopback and proxy via Next.js)"
+    prompt: "GTW bind address"
+    password: false
+  - name: GTW_ALLOWED_USERS
+    description: "Comma-separated GTW login names allowed to talk to the agent"
+    prompt: "Allowed users (comma-separated)"
+    password: false
+  - name: GTW_ALLOW_ALL_USERS
+    description: "Allow any authenticated GTW session (single-owner deployments)"
+    prompt: "Allow all users? (true/false)"
+    password: false
+  - name: GTW_HOME_CHANNEL
+    description: "Chat id for cron / notification delivery (defaults to 'main')"
+    prompt: "Home chat id (or empty)"
+    password: false
