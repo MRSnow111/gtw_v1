@@ -30,7 +30,15 @@ hermes -p default gateway restart
 # 6. Проверка
 hermes gateway status        # в списке платформ должна появиться GTW
 curl -s http://127.0.0.1:8765/health   # {"ok": true}
+
+# 7. End-to-end пробник (health -> WS -> реальное сообщение агенту -> ответ)
+curl -fsSL https://raw.githubusercontent.com/MRSnow111/gtw_v1/main/plugin/probe.py -o /tmp/gtw-probe.py
+~/.hermes/tools/python-*/bin/python3 /tmp/gtw-probe.py
 ```
+
+Пробник сам читает `GTW_TOKEN` из `~/.hermes/.env` (не печатает его), шлёт агенту
+тестовое сообщение в чат `gtw-probe` и печатает ответ. Approval-запросы отклоняет.
+Флаги: `--port`, `--timeout` (по умолчанию 240с), `--chat`, `--text`.
 
 По умолчанию WS слушает `127.0.0.1:8765` (наружу не торчит). Порт/адрес меняются
 через `GTW_PORT` / `GTW_BIND` в `.env` или `gateway.platforms.gtw.extra` в config.yaml.
