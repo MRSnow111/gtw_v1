@@ -1,0 +1,126 @@
+"use client";
+
+import { useState, useEffect } from "react";
+import { motion } from "framer-motion";
+import { AdminCard } from "@/components/admin/AdminCard";
+import { StatusBadge } from "@/components/admin/StatusBadge";
+import {
+  Users,
+  Clock,
+  Puzzle,
+  Activity,
+  Settings,
+  Server,
+} from "lucide-react";
+
+export default function AdminDashboardPage() {
+  const [stats, setStats] = useState<any>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    fetch("/api/admin/health")
+      .then((r) => r.json())
+      .then((data) => {
+        setStats(data);
+        setLoading(false);
+      })
+      .catch(() => setLoading(false));
+  }, []);
+
+  const cards = [
+    {
+      title: "Пользователи",
+      subtitle: "Всего зарегистрировано",
+      value: stats?.totalUsers ?? "—",
+      icon: <Users className="h-4 w-4" />,
+      gradient: "text-mint",
+    },
+    {
+      title: "Активные сессии",
+      subtitle: "Сейчас онлайн",
+      value: stats?.activeSessions ?? "—",
+      icon: <Clock className="h-4 w-4" />,
+      gradient: "text-[#6BA3D6]",
+    },
+    {
+      title: "Плагины",
+      subtitle: "Включено",
+      value: stats?.activePlugins ?? "—",
+      icon: <Puzzle className="h-4 w-4" />,
+      gradient: "text-amber-400/90",
+    },
+    {
+      title: "Ошибки",
+      subtitle: "Процент ошибок",
+      value: stats ? `${stats.errorRate}%` : "—",
+      icon: <Activity className="h-4 w-4" />,
+      gradient: "text-red-400/90",
+    },
+    {
+      title: "Изменения конфига",
+      subtitle: "За всё время",
+      value: stats?.configChanges ?? "—",
+      icon: <Settings className="h-4 w-4" />,
+      gradient: "text-mint-soft",
+    },
+    {
+      title: "Аптайм",
+      subtitle: "Время работы",
+      value: stats?.uptime ?? "—",
+      icon: <Server className="h-4 w-4" />,
+      gradient: "text-emerald-400/90",
+    },
+  ];
+
+  return (
+    <div className="space-y-6">
+      <div>
+        <h1 className="text-xl font-semibold text-[rgba(220,235,230,0.95)]">
+          Дашборд
+        </h1>
+        <p className="text-sm text-[rgba(165,187,179,0.6)] mt-1">
+          Общая информация о системе
+        </p>
+      </div>
+
+      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4">
+        {cards.map((card, i) => (
+          <motion.div
+            key={card.title}
+            initial={{ opacity: 0, y: 16 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: i * 0.06 }}
+          >
+            <AdminCard
+              title={card.title}
+              subtitle={card.subtitle}
+              icon={
+                <div className="glass-medium flex h-9 w-9 items-center justify-center rounded-xl border border-mint/20">
+                  <span className={card.gradient}>{card.icon}</span>
+                </div>
+              }
+            >
+              <div className="text-3xl font-bold text-[rgba(220,235,230,0.9)]">
+                {loading ? (
+                  <div className="h-9 w-16 rounded-lg bg-[rgba(143,184,174,0.1)] animate-pulse" />
+                ) : (
+                  card.value
+                )}
+              </div>
+            </AdminCard>
+          </motion.div>
+        ))}
+      </div>
+
+      {/* Live-reload indicator */}
+      <AdminCard variant="light" title="Live-reload настроек" subtitle="Автоматическая перезагрузка конфигурации">
+        <div className="flex items-center gap-3">
+          <StatusBadge status="active" />
+          <span className="text-xs text-[rgba(165,187,179,0.6)]">
+            Настройки обновляются без перезапуска gateway
+          </span>
+        </div>
+      </AdminCard>
+    </div>
+  );
+}

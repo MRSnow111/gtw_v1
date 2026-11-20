@@ -7,8 +7,9 @@ import { formatDistanceToNowStrict } from "date-fns";
 import { ru } from "date-fns/locale";
 import {
   BarChart3, LogOut, MessageSquare, MoreHorizontal, Pencil,
-  Plus, Search, Settings, SquareTerminal, Sun, Trash2, X,
+  Plus, Search, Settings, Shield, SquareTerminal, Sun, Trash2, X,
 } from "lucide-react";
+import Link from "next/link";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { useAuthStore } from "@/stores/authStore";
@@ -282,6 +283,18 @@ export function Sidebar({ className, onNavigate }: SidebarProps) {
             </AnimatePresence>
           </div>
         ))}
+      </div>
+
+      {/* ── админ-панель ── */}
+      <div className="px-4 pb-2">
+        <Link
+          href="/admin"
+          onClick={() => setDrawerOpen(false)}
+          className="flex w-full items-center gap-2.5 rounded-xl px-3 py-2 text-[13px] text-dim transition-colors hover:bg-white/[0.05] hover:text-foreground"
+        >
+          <Shield className="h-4 w-4" />
+          Админ-панель
+        </Link>
       </div>
 
       {/* ── футер ── */}

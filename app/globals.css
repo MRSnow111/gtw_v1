@@ -288,3 +288,7 @@
     scroll-behavior: auto !important;
   }
 }
+
+/* мягкое mint-свечение при наведении (glass-карточки админки) */
+.glass-hover { transition: box-shadow 0.2s ease, border-color 0.2s ease; }
+.glass-hover:hover { box-shadow: 0 0 24px rgba(143, 184, 174, 0.18); border-color: rgba(143, 184, 174, 0.35); }
