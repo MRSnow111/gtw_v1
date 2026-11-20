@@ -103,6 +103,12 @@ npm start            # GTW_TOKEN не нужен
   `ssh -L 3000:127.0.0.1:3000 hermes@<host>`).
 - **Ход «зависает» без ошибок**: клиент→адаптер кадры должны идти TEXT-фреймами
   (адаптер читает только `WSMsgType.TEXT`, binary молча отбрасывается).
+- **Браузер: `SSL_ERROR_INTERNAL_ERROR_ALERT` на `www.mimiric.ru`**: в Caddyfile
+  перечислены оба имени, иначе для `www` нет сертификата и Caddy шлёт TLS alert
+  internal error. Строка сайта: `mimiric.ru, www.mimiric.ru {`. Быстрый фикс:
+  `sudo sed -i 's/^mimiric\.ru {/mimiric.ru, www.mimiric.ru {/' /etc/caddy/Caddyfile`
+  затем `sudo caddy validate --config /etc/caddy/Caddyfile && sudo systemctl reload caddy`.
+  Сертификат для `www` Caddy получит сам (порт 80 должен быть открыт).
 
 ## E2E-проверка (песочница)
 
