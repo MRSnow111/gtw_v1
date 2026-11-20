@@ -32,9 +32,12 @@
 | `NODE_ENV` | server.js | — | `production` для боевого запуска |
 | `NEXT_PUBLIC_DEMO_MODE` | сборка | выкл | `1` = демо-режим (вшивается при сборке) |
 
-На стороне gateway (плагин `gtw`, см. `plugin/README.md`):
-`gateway.platforms.gtw.extra` → `token`, `port` (8765), `bind` (127.0.0.1);
-либо env `GTW_TOKEN` / `GTW_PORT` / `GTW_BIND` / `GTW_ALLOW_ALL_USERS`.
+На стороне gateway (плагин `gtw`, см. `plugin/README.md`): токен обычно лежит
+в `~/.hermes/.env` строкой `GTW_TOKEN=...` (либо
+`gateway.platforms.gtw.extra.token` в конфиге); порт/бинд —
+`gateway.platforms.gtw.extra` → `port` (8765), `bind` (127.0.0.1), либо env
+`GTW_PORT` / `GTW_BIND` / `GTW_ALLOW_ALL_USERS`. Скопировать токен в `gtw.env`,
+не печатая: `grep '^GTW_TOKEN=' ~/.hermes/.env >> ~/gtw.env`.
 
 ## Сборка и запуск
 
