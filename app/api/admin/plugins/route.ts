@@ -1,15 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
+import { requireAdmin } from "@/lib/adminAuth";
 
-function requireAuth(request: NextRequest) {
-  const auth = request.cookies.get("gtw-auth");
-  if (!auth) {
-    return NextResponse.json({ code: "unauthorized" }, { status: 401 });
-  }
-  return null;
-}
 
 export async function GET(request: NextRequest) {
-  const unauthorized = requireAuth(request);
+  const unauthorized = await requireAdmin(request);
   if (unauthorized) return unauthorized;
 
   const { mockPlugins } = await import("@/data/mockAdminData");
@@ -17,7 +11,7 @@ export async function GET(request: NextRequest) {
 }
 
 export async function POST(request: NextRequest) {
-  const unauthorized = requireAuth(request);
+  const unauthorized = await requireAdmin(request);
   if (unauthorized) return unauthorized;
 
   const { searchParams } = request.nextUrl;

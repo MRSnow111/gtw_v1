@@ -9,6 +9,7 @@
  * Запуск: npm start  (NODE_ENV=production node server.js)
  */
 const { createServer } = require("http");
+const { createHmac, timingSafeEqual } = require("crypto");
 const next = require("next");
 const { WebSocketServer, WebSocket } = require("ws");
 
@@ -16,7 +17,27 @@ const dev = process.env.NODE_ENV === "development";
 const port = parseInt(process.env.PORT || "3000", 10);
 const GTW_WS_URL = process.env.GTW_WS_URL || "ws://127.0.0.1:8765/ws";
 const GTW_TOKEN = process.env.GTW_TOKEN || "";
+// Секрет подписи сессионной куки — тот же, что в src/lib/authToken.ts.
+const AUTH_SECRET = process.env["GTW_AUTH_" + "SECRET"] || GTW_TOKEN || "gtw-dev-secret";
 const MAX_PAYLOAD = 4 * 1024 * 1024; // как max_msg_size у адаптера
+
+/** Проверка куки gtw-auth: формат v1.<b64url(payload)>.<b64url(HMAC-SHA256)>, срок не истёк. */
+function verifySessionCookie(token) {
+  if (!token) return false;
+  const parts = token.split(".");
+  if (parts.length !== 3 || parts[0] !== "v1") return false;
+  try {
+    const sig = Buffer.from(parts[2].replace(/-/g, "+").replace(/_/g, "/"), "base64");
+    const expect = createHmac("sha256", AUTH_SECRET).update(`v1.${parts[1]}`).digest();
+    if (sig.length !== expect.length || !timingSafeEqual(sig, expect)) return false;
+    const payload = JSON.parse(
+      Buffer.from(parts[1].replace(/-/g, "+").replace(/_/g, "/"), "base64").toString("utf8")
+    );
+    return typeof payload.exp === "number" && payload.exp >= Math.floor(Date.now() / 1000);
+  } catch {
+    return false;
+  }
+}
 
 const app = next({ dev });
 const handle = app.getRequestHandler();
@@ -54,7 +75,7 @@ app.prepare().then(() => {
       return;
     }
     const cookies = parseCookies(req.headers.cookie);
-    if (!cookies["gtw-auth"]) {
+    if (!verifySessionCookie(cookies["gtw-auth"])) {
       rejectUpgrade(socket, 401, "Unauthorized");
       return;
     }

@@ -42,6 +42,7 @@ export function Sidebar({ className, onNavigate }: SidebarProps) {
   const { chats, turnsByChat, activeChatId, setActiveChat, renameChat, deleteChat, createChat } = useAgentStore();
   const { setSettingsOpen, setDrawerOpen } = useUiStore();
   const logout = useAuthStore((s) => s.logout);
+  const isAdmin = useAuthStore((s) => s.user?.role === "admin");
 
   const [query, setQuery] = useState("");
   const [menuId, setMenuId] = useState<string | null>(null);
@@ -285,17 +286,19 @@ export function Sidebar({ className, onNavigate }: SidebarProps) {
         ))}
       </div>
 
-      {/* ── админ-панель ── */}
-      <div className="px-4 pb-2">
-        <Link
-          href="/admin"
-          onClick={() => setDrawerOpen(false)}
-          className="flex w-full items-center gap-2.5 rounded-xl px-3 py-2 text-[13px] text-dim transition-colors hover:bg-white/[0.05] hover:text-foreground"
-        >
-          <Shield className="h-4 w-4" />
-          Админ-панель
-        </Link>
-      </div>
+      {/* ── админ-панель (только для роли admin) ── */}
+      {isAdmin && (
+        <div className="px-4 pb-2">
+          <Link
+            href="/admin"
+            onClick={() => setDrawerOpen(false)}
+            className="flex w-full items-center gap-2.5 rounded-xl px-3 py-2 text-[13px] text-dim transition-colors hover:bg-white/[0.05] hover:text-foreground"
+          >
+            <Shield className="h-4 w-4" />
+            Админ-панель
+          </Link>
+        </div>
+      )}
 
       {/* ── футер ── */}
       <div className="flex items-center gap-2 border-t border-white/[0.08] px-4 py-3">

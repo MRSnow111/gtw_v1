@@ -31,6 +31,12 @@
 | `GTW_TOKEN` | server.js | — (обязателен) | токен апстрима, совпадает с токеном плагина |
 | `NODE_ENV` | server.js | — | `production` для боевого запуска |
 | `NEXT_PUBLIC_DEMO_MODE` | сборка | выкл | `1` = демо-режим (вшивается при сборке) |
+| `GTW_LOGIN` / `GTW_PASSWORD` | server.js | `demo` / `demo` | аккаунт владельца (роль `admin`, доступ к `/admin`) |
+| `GTW_USER_LOGIN` / `GTW_USER_PASSWORD` | server.js | — | опциональный аккаунт пользователя (роль `user`, только чат) |
+| `GTW_AUTH_SECRET` | server.js | = `GTW_TOKEN` | секрет подписи сессионной куки; можно не задавать |
+
+Роли и защита админки — `docs/admin.md`. После обновления со старых кук
+(`mock.<ts>`) нужен повторный вход.
 
 На стороне gateway (плагин `gtw`, см. `plugin/README.md`): токен обычно лежит
 в `~/.hermes/.env` строкой `GTW_TOKEN=...` (либо

@@ -9,12 +9,14 @@ export default function ChatLayout({ children }: { children: React.ReactNode }) 
   const router = useRouter();
   const user = useAuthStore((s) => s.user);
   const hydrated = useAuthStore((s) => s.hydrated);
+  const sessionChecked = useAuthStore((s) => s.sessionChecked);
 
   useEffect(() => {
-    if (hydrated && !user) router.replace("/");
-  }, [hydrated, user, router]);
+    // Редирект только после сверки с /api/auth/me — иначе гонка с refresh().
+    if (hydrated && sessionChecked && !user) router.replace("/");
+  }, [hydrated, sessionChecked, user, router]);
 
-  if (!hydrated || !user) return null;
+  if (!hydrated || !sessionChecked || !user) return null;
 
   return <AppShell>{children}</AppShell>;
 }

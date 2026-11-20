@@ -63,7 +63,11 @@ export function SettingsModal() {
                 <div>
                   <div className="text-sm text-foreground">{user?.name ?? DEMO_USER.name}</div>
                   <div className="text-[11px] text-[rgba(220,235,230,0.6)]">
-                    {user?.role ?? "владелец"}
+                    {user?.role === "admin"
+                      ? "админ"
+                      : user?.role === "user"
+                        ? "пользователь"
+                        : "гость"}
                   </div>
                 </div>
               </div>

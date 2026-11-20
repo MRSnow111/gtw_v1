@@ -1,16 +1,23 @@
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
+import { verifySession } from "@/lib/authToken";
 
-// Защита /chat* и /admin*: без куки gtw-auth — редирект на / (docs/design.md §9).
-// TODO: когда бэкенд начнёт выдавать подписанные токены — добавить проверку
-// подписи вместо проверки наличия куки.
-export function middleware(request: NextRequest) {
+/**
+ * Защита /chat* и /admin*: нужна валидная подписанная кука gtw-auth.
+ * /admin* дополнительно требует роль admin; обычного пользователя — в /chat.
+ */
+export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
   if (pathname.startsWith("/chat") || pathname.startsWith("/admin")) {
-    const auth = request.cookies.get("gtw-auth");
-    if (!auth) {
+    const session = await verifySession(
+      request.cookies.get("gtw-auth")?.value
+    );
+    if (!session) {
       return NextResponse.redirect(new URL("/", request.url));
+    }
+    if (pathname.startsWith("/admin") && session.role !== "admin") {
+      return NextResponse.redirect(new URL("/chat", request.url));
     }
   }
 
@@ -18,5 +25,10 @@ export function middleware(request: NextRequest) {
 }
 
 export const config = {
-  matcher: ["/((?!_next|api|favicon.ico|public).*)"],
+  matcher: [
+    /*
+     * Исключаем _next, api, статику — middleware только для страниц.
+     */
+    "/((?!_next|api|favicon.ico|public).*)",
+  ],
 };
