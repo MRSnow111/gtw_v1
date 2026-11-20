@@ -82,6 +82,22 @@ npm start            # GTW_TOKEN не нужен
 3. Сменить демо-креды, выставить наружу только порт Next-сервера
    (реверс-прокси/TLS на хосте). Порт 8765 наружу не открывать.
 
+## Траблшутинг
+
+- **`npm ci` → ERR_SOCKET_TIMEOUT** (частое с РФ-IP): поднять таймауты
+  (`npm config set fetch-timeout 300000`, `fetch-retries 5`) или использовать
+  зеркало: `npm ci --registry=https://registry.npmmirror.com`.
+- **Caddy не стартует**: адрес сайта без двоеточия — `mimiric.ru {`, а не
+  `:mimiric.ru {` (остаётся от дефолтного `:80`). Проверка:
+  `sudo caddy validate --config /etc/caddy/Caddyfile`; на незапущенном
+  сервисе `reload` падает — нужен `restart`.
+- **Вход проходит, но чат не подключается (401 на /ws)**: кука `gtw-auth`
+  имеет флаг Secure и по обычному HTTP не принимается браузером. Нужен HTTPS
+  (Caddy) либо проверка через `http://localhost:3000` (SSH-туннель
+  `ssh -L 3000:127.0.0.1:3000 hermes@<host>`).
+- **Ход «зависает» без ошибок**: клиент→адаптер кадры должны идти TEXT-фреймами
+  (адаптер читает только `WSMsgType.TEXT`, binary молча отбрасывается).
+
 ## E2E-проверка (песочница)
 
 Стаб с реальным адаптером + Playwright: `/root/gtw-test/ui_stub.py`
