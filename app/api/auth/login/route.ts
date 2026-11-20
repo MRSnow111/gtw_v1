@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { signSession, type Role } from "@/lib/authToken";
+import { verifyUser, touchLastLogin } from "@/lib/userStore";
 
 /**
  * Два аккаунта из env:
@@ -31,6 +32,15 @@ export async function POST(request: NextRequest) {
     body.password === USER_PASSWORD
   ) {
     role = "user";
+  }
+
+  // Пользователи, созданные в админке (SQLite, scrypt-проверка).
+  if (!role && body.login && body.password) {
+    const dbUser = verifyUser(body.login, body.password);
+    if (dbUser) {
+      role = dbUser.role;
+      touchLastLogin(body.login);
+    }
   }
 
   if (!role || !body.login) {

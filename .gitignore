@@ -36,3 +36,6 @@ next-env.d.ts
 
 # opencode
 opencode/
+
+# данные GTW (SQLite-БД и рабочие файлы) — создаются на сервере
+data/

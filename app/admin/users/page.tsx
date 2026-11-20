@@ -19,18 +19,25 @@ export default function AdminUsersPage() {
   const [newPassword, setNewPassword] = useState("");
   const [newRole, setNewRole] = useState<"admin" | "user">("user");
 
-  useEffect(() => {
+  const loadUsers = () => {
     fetch("/api/admin/users")
       .then((r) => r.json())
       .then(setUsers)
       .finally(() => setLoading(false));
+  };
+
+  useEffect(() => {
+    loadUsers();
   }, []);
 
   const handleDelete = async (id: string) => {
-    const res = await fetch(`/api/admin/users?id=${id}`, { method: "DELETE" });
+    const res = await fetch(`/api/admin/users?id=${encodeURIComponent(id)}`, { method: "DELETE" });
+    const data = await res.json().catch(() => null);
     if (res.ok) {
       toast.success("Пользователь удалён");
-      setUsers((prev) => prev.filter((u) => u.id !== id));
+      loadUsers();
+    } else {
+      toast.error(data?.message ?? "Не удалось удалить");
     }
   };
 
@@ -44,16 +51,16 @@ export default function AdminUsersPage() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ login: newLogin, password: newPassword, role: newRole }),
     });
+    const data = await res.json().catch(() => null);
     if (res.ok) {
-      toast.success("Пользователь создан");
+      toast.success(`Пользователь «${newLogin}» создан — можно входить`);
       setAdding(false);
       setNewLogin("");
       setNewPassword("");
       setNewRole("user");
-      setUsers((prev) => [
-        ...prev,
-        { id: String(Date.now()), login: newLogin, role: newRole, isActive: true, createdAt: new Date().toISOString(), lastLogin: "—" },
-      ]);
+      loadUsers();
+    } else {
+      toast.error(data?.message ?? "Не удалось создать пользователя");
     }
   };
 
@@ -128,7 +135,7 @@ export default function AdminUsersPage() {
               key: "id",
               label: "Действия",
               render: (id: string, row: any) =>
-                row.role !== "admin" ? (
+                row.source !== "env" ? (
                   <button
                     onClick={() => handleDelete(id)}
                     className="text-[rgba(220,112,112,0.6)] hover:text-[rgba(220,112,112,0.9)] transition-colors"

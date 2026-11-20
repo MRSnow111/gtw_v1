@@ -34,6 +34,13 @@
 | `GTW_LOGIN` / `GTW_PASSWORD` | server.js | `demo` / `demo` | аккаунт владельца (роль `admin`, доступ к `/admin`) |
 | `GTW_USER_LOGIN` / `GTW_USER_PASSWORD` | server.js | — | опциональный аккаунт пользователя (роль `user`, только чат) |
 | `GTW_AUTH_SECRET` | server.js | = `GTW_TOKEN` | секрет подписи сессионной куки; можно не задавать |
+| `GTW_DATA_DIR` | server.js | `<cwd>/data` | каталог данных: SQLite-БД `gtw.db` (пользователи админки) |
+| `GTW_FILES_DIR` | server.js | `<GTW_DATA_DIR>/files` | корень файлового менеджера `/admin/files` |
+
+Требуется **Node ≥ 22.13** (встроенный `node:sqlite` без флага; на хосте
+v22.22.1 — подходит). Каталог `data/` создаётся автоматически при первом
+обращении, в git не попадает (`.gitignore`). Бэкап пользователей = копия
+`data/gtw.db`.
 
 Роли и защита админки — `docs/admin.md`. После обновления со старых кук
 (`mock.<ts>`) нужен повторный вход.
