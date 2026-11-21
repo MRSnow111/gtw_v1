@@ -21,7 +21,10 @@ export function AdminModal({ isOpen, onClose, title, children, footer, wide }: A
         className="absolute inset-0 bg-black/50 backdrop-blur-sm"
         onClick={onClose}
       />
-      <div className={`relative glass-strong rounded-[28px] p-6 w-full ${wide ? "max-w-3xl" : "max-w-lg"} max-h-[80vh] flex flex-col gap-4 animate-in fade-in zoom-in-95 duration-200`}>
+      <div
+        className={`relative glass-strong rounded-[28px] p-6 w-full ${wide ? "max-w-3xl" : "max-w-lg"} max-h-[80vh] flex flex-col gap-4 animate-in fade-in zoom-in-95 duration-200`}
+        style={{ background: "linear-gradient(135deg, rgba(23,46,42,0.985), rgba(13,28,25,0.99))" }}
+      >
         <div className="flex items-center justify-between">
           <h2 className="text-base font-semibold text-[rgba(220,235,230,0.9)]">{title}</h2>
           <button

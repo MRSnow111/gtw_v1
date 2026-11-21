@@ -41,8 +41,14 @@ export function listUsers(): StoredUser[] {
     lastLogin: null,
     source: "env",
   };
+  // env-пользователь (GTW_USER_LOGIN) — полноценный участник: его видно
+  // в списке, ему можно ставить лимиты токенов; удалить/переименовать нельзя.
+  const envUsers: StoredUser[] = [envAdmin];
+  if (LEGACY_USER_LOGIN && LEGACY_USER_LOGIN !== ADMIN_LOGIN) {
+    envUsers.push({ login: LEGACY_USER_LOGIN, role: "user", createdAt: "", lastLogin: null, source: "env" });
+  }
   const dbUsers: StoredUser[] = rows
-    .filter((r) => r.login !== ADMIN_LOGIN)
+    .filter((r) => r.login !== ADMIN_LOGIN && r.login !== LEGACY_USER_LOGIN)
     .map((r) => ({
       login: r.login,
       role: r.role,
@@ -50,7 +56,7 @@ export function listUsers(): StoredUser[] {
       lastLogin: r.last_login,
       source: "db",
     }));
-  return [envAdmin, ...dbUsers];
+  return [...envUsers, ...dbUsers];
 }
 
 export function addUser(login: string, password: string, role: Role): StoredUser {

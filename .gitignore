@@ -39,3 +39,7 @@ opencode/
 
 # данные GTW (SQLite-БД и рабочие файлы) — создаются на сервере
 data/
+
+# python-кэш плагина
+__pycache__/
+*.pyc

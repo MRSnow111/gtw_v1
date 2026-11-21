@@ -70,6 +70,8 @@ function armSilence(chatId: string) {
       agentState: "done",
       thinkingMs: t.thinkingMs ?? Math.max(0, Date.now() - t.createdAt),
     });
+    // обновляем статистику сессии (и учёт токенов в прокси) после хода
+    gtwSocket.send({ type: "session_info", chat_id: chatId });
   }, SILENCE_MS));
 }
 
@@ -161,6 +163,7 @@ function onFrame(frame: GtwServerFrame) {
           agentState: "done",
           thinkingMs: t.thinkingMs ?? Math.max(0, Date.now() - t.createdAt),
         });
+        gtwSocket.send({ type: "session_info", chat_id: chatId });
       } else {
         armSilence(chatId);
       }
@@ -270,8 +273,75 @@ function onFrame(frame: GtwServerFrame) {
       break;
     }
 
+    case "session_info": {
+      useLiveStore.setState((s) => ({
+        sessionInfoByChat: { ...(s.sessionInfoByChat || {}), [frame.info.chat_id]: frame.info },
+      }));
+      break;
+    }
+
+    case "status": {
+      const chatId = frame.chat_id;
+      const t = ensureAgentTurn(chatId);
+      const meta = frame.metadata || {};
+      const content = String(frame.content || "").trim();
+      if (!content) break;
+      if (typeof meta.tool === "string") {
+        // tool-progress со структурированным именем инструмента
+        finishThinking(chatId, t);
+        const tc: ToolCall = {
+          id: String(meta.tool_id || frame.status_key || frame.content.slice(0, 24)),
+          tool: meta.tool,
+          arg: String(meta.arg ?? meta.args ?? ""),
+          status: meta.status === "error" ? "error" : meta.status === "running" ? "running" : "ok",
+          output: content,
+        };
+        patchTurn(chatId, t.id, (prev) => ({ tools: upsertTool(prev.tools || [], tc) }));
+      } else {
+        // рассуждения/commentary и служебные статусы — в сворачиваемый блок,
+        // не в тело ответа; один status_key обновляет свою строку, не плодит дубли
+        const key = String(frame.status_key || "");
+        const kind = String(meta.kind || "");
+        const isReasoning = kind === "thinking" || kind === "commentary" || kind === "reasoning"
+          || key.includes("commentary") || key.includes("thinking");
+        patchTurn(chatId, t.id, (prev) => {
+          if (isReasoning || !key) {
+            const prevText = prev.thinkingText || "";
+            // повторный кадр того же рассуждения (edit) не дублируем
+            if (prevText.endsWith(content)) return {};
+            return { thinkingText: prevText ? `${prevText}\n${content}` : content };
+          }
+          return { statusNotes: { ...(prev.statusNotes || {}), [key]: content } };
+        });
+      }
+      armSilence(chatId);
+      break;
+    }
+
+    case "models":
+    case "sessions":
+    case "set_model_ack":
+      // админ-кадры обрабатываются в админке через REST; в чате игнорируем
+      break;
+
     case "error": {
-      toast.error(`Шлюз: ${frame.error}`);
+      if (frame.error === "quota_exceeded") {
+        const used = typeof frame.used === "number" ? frame.used.toLocaleString("ru-RU") : "?";
+        const limit = typeof frame.limit === "number" ? frame.limit.toLocaleString("ru-RU") : "?";
+        toast.error(`Лимит токенов исчерпан: ${used} / ${limit}. Обратитесь к администратору.`);
+        const entries: [string, Turn[]][] = Object.entries(useLiveStore.getState().turnsByChat);
+        for (const [chatId, turns] of entries) {
+          const t = turns[turns.length - 1];
+          if (t?.kind === "agent" && t.agentState === "running") {
+            patchTurn(chatId, t.id, { agentState: "error" });
+            break;
+          }
+        }
+      } else if (frame.error === "forbidden") {
+        toast.error("Недостаточно прав для этого действия");
+      } else {
+        toast.error(`Шлюз: ${frame.error}`);
+      }
       break;
     }
   }
@@ -292,6 +362,11 @@ export const useLiveStore = create<DemoState>()(
       loadingChats: {},
       commands: seedCommands,
       activeChatId: null,
+      sessionInfoByChat: {},
+
+      requestSessionInfo: (chatId) => {
+        gtwSocket.send({ type: "session_info", chat_id: chatId });
+      },
 
       setActiveChat: (id) => set({ activeChatId: id }),
 

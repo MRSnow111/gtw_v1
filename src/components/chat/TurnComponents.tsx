@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { motion } from "framer-motion";
 import {
-  Ban, Check, CheckCheck, ChevronDown, ChevronRight, Clock3, Copy,
+  Ban, Brain, Check, CheckCheck, ChevronDown, ChevronRight, Clock3, Copy,
   FileCode2, FileSearch, FileText, Globe, HelpCircle, Loader2, Pencil,
   ShieldAlert, Terminal, X,
 } from "lucide-react";
@@ -375,6 +375,83 @@ export function ClarifyBlock({ turn, chatId }: { turn: Turn; chatId: string }) {
   );
 }
 
+/* ─────────── рассуждения (сворачиваемый блок) ─────────── */
+
+function ThinkingBlock({ turn }: { turn: Turn }) {
+  const [open, setOpen] = useState(false);
+  const streaming = turn.agentState === "running";
+  const notes = Object.values(turn.statusNotes || {});
+  const content = [turn.thinkingText || "", ...notes].filter(Boolean).join("\n");
+  const hasContent = content.length > 0;
+  const thinkingNow = streaming && (turn.thinkingMs === null || turn.thinkingMs === undefined);
+
+  // нет рассуждений и не думаем — старая компактная строка «Думал Xс»
+  if (!hasContent && !thinkingNow) {
+    if (!streaming && (turn.thinkingMs ?? 0) > 0) {
+      return (
+        <div className="text-[12px] text-[rgba(220,235,230,0.6)]">
+          Думал {(turn.thinkingMs! / 1000).toFixed(1)}с
+        </div>
+      );
+    }
+    if (streaming) {
+      return (
+        <div className="flex items-center gap-2 text-[12px]">
+          <Loader2 className="h-3 w-3 animate-spin text-mint" />
+          <span className="text-[rgba(220,235,230,0.66)]">Думает…</span>
+        </div>
+      );
+    }
+    return null;
+  }
+
+  const lastLine = content.split("\n").filter(Boolean).pop() || "";
+  return (
+    <div className="overflow-hidden rounded-xl border border-white/[0.07] bg-white/[0.02]">
+      <button
+        onClick={() => setOpen((v) => !v)}
+        className="flex w-full items-center gap-2 px-3 py-2 text-left transition-colors hover:bg-white/[0.03]"
+      >
+        {thinkingNow ? (
+          <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-mint" />
+        ) : (
+          <Brain className="h-3.5 w-3.5 shrink-0 text-mint/70" />
+        )}
+        <span className="text-[12px] font-medium text-[rgba(220,235,230,0.75)]">
+          {thinkingNow ? "Рассуждает…" : "Рассуждения"}
+        </span>
+        {!open && (
+          <span className="min-w-0 flex-1 truncate text-[11.5px] italic text-[rgba(165,187,179,0.5)]">
+            {lastLine}
+          </span>
+        )}
+        {open && <span className="flex-1" />}
+        <span className="shrink-0 text-[10.5px] text-[rgba(165,187,179,0.45)]">
+          {content.length.toLocaleString("ru-RU")} зн.
+        </span>
+        {open ? (
+          <ChevronDown className="h-3.5 w-3.5 shrink-0 text-[rgba(220,235,230,0.52)]" />
+        ) : (
+          <ChevronRight className="h-3.5 w-3.5 shrink-0 text-[rgba(220,235,230,0.52)]" />
+        )}
+      </button>
+      {open && (
+        <motion.div
+          initial={{ height: 0, opacity: 0 }}
+          animate={{ height: "auto", opacity: 1 }}
+          transition={{ duration: 0.25, ease: [0.22, 1, 0.36, 1] }}
+        >
+          <div className="scroll-area max-h-64 overflow-auto border-t border-white/[0.06] px-3.5 py-2.5">
+            <p className="whitespace-pre-wrap text-[12px] leading-[1.7] text-[rgba(165,187,179,0.72)]">
+              {content}
+            </p>
+          </div>
+        </motion.div>
+      )}
+    </div>
+  );
+}
+
 /* ─────────── ход агента ─────────── */
 
 export function AgentTurn({ turn, chatId }: { turn: Turn; chatId: string }) {
@@ -391,21 +468,8 @@ export function AgentTurn({ turn, chatId }: { turn: Turn; chatId: string }) {
       transition={{ duration: 0.25, ease: [0.22, 1, 0.36, 1] }}
       className="group/turn flex flex-col gap-2.5"
     >
-      {/* thinking (у ходов из истории без замера времени строку не показываем) */}
-      {(turn.agentState === "running" || (turn.thinkingMs ?? 0) > 0) && (
-        <div className="flex items-center gap-2 text-[12px]">
-          {turn.thinkingMs === null || turn.thinkingMs === undefined ? (
-            <>
-              <Loader2 className="h-3 w-3 animate-spin text-mint" />
-              <span className="text-[rgba(220,235,230,0.66)]">Думает…</span>
-            </>
-          ) : (
-            <span className="text-[rgba(220,235,230,0.6)]">
-              Думал {(turn.thinkingMs / 1000).toFixed(1)}с
-            </span>
-          )}
-        </div>
-      )}
+      {/* рассуждения: компактный сворачиваемый блок вместо простыни текста */}
+      <ThinkingBlock turn={turn} />
 
       {/* tool-вызовы */}
       {turn.tools && turn.tools.length > 0 && (

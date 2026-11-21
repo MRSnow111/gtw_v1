@@ -1,14 +1,20 @@
 "use client";
 
-import { Copy, Maximize2 } from "lucide-react";
+import { useState } from "react";
+import { AnimatePresence } from "framer-motion";
+import { Copy, Info, Maximize2 } from "lucide-react";
 import { toast } from "sonner";
 import { useWsStore } from "@/stores/wsStore";
 import { useUiStore } from "@/stores/uiStore";
+import { useAgentStore } from "@/stores/agentStore";
 import { IconButton, StatusDot } from "@/components/ui/glass";
+import { SessionInfoPanel } from "@/components/chat/SessionInfoPanel";
 
 export function ChatHeader({ title }: { title?: string }) {
   const status = useWsStore((s) => s.status);
   const { focusComposer } = useUiStore();
+  const activeChatId = useAgentStore((s) => s.activeChatId);
+  const [showInfo, setShowInfo] = useState(false);
 
   const tone = status === "connected" ? "ok" : status === "reconnecting" ? "warn" : "err";
   const text =
@@ -32,6 +38,13 @@ export function ChatHeader({ title }: { title?: string }) {
         <span className="text-[11.5px] text-dim">{text}</span>
       </div>
       <IconButton
+        aria-label="Информация о сессии"
+        title="Информация о сессии"
+        onClick={() => setShowInfo((v) => !v)}
+      >
+        <Info className="h-4 w-4" />
+      </IconButton>
+      <IconButton
         aria-label="Копировать переписку"
         title="Копировать переписку"
         onClick={() => toast.success("Переписка скопирована")}
@@ -45,6 +58,11 @@ export function ChatHeader({ title }: { title?: string }) {
       >
         <Maximize2 className="h-4 w-4" />
       </IconButton>
+      <AnimatePresence>
+        {showInfo && activeChatId && (
+          <SessionInfoPanel chatId={activeChatId} onClose={() => setShowInfo(false)} />
+        )}
+      </AnimatePresence>
     </header>
   );
 }

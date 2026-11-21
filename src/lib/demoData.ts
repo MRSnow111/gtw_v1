@@ -60,6 +60,8 @@ export interface Turn {
   approval?: Approval;
   clarify?: Clarify;
   usage?: { inTokens: number; outTokens: number; durationMs: number };
+  thinkingText?: string; // рассуждения/commentary агента (кадры status)
+  statusNotes?: Record<string, string>; // служебные статусы по status_key (последнее значение)
   agentState?: "running" | "done" | "cancelled" | "error";
 }
 

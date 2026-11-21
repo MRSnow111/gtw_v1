@@ -18,6 +18,9 @@ export default function AdminUsersPage() {
   const [newLogin, setNewLogin] = useState("");
   const [newPassword, setNewPassword] = useState("");
   const [newRole, setNewRole] = useState<"admin" | "user">("user");
+  const [usage, setUsage] = useState<Record<string, { limit: number | null; used: number }>>({});
+  const [limitEditing, setLimitEditing] = useState<string | null>(null);
+  const [limitValue, setLimitValue] = useState("");
 
   const loadUsers = () => {
     fetch("/api/admin/users")
@@ -25,10 +28,48 @@ export default function AdminUsersPage() {
       .then(setUsers)
       .finally(() => setLoading(false));
   };
+  const loadLimits = () => {
+    fetch("/api/admin/limits")
+      .then((r) => r.json())
+      .then((d) => {
+        const map: Record<string, { limit: number | null; used: number }> = {};
+        for (const u of d.users || []) map[u.login] = { limit: u.limit, used: u.used };
+        setUsage(map);
+      })
+      .catch(() => {});
+  };
 
   useEffect(() => {
     loadUsers();
+    loadLimits();
   }, []);
+
+  const openLimitEditor = (login: string) => {
+    setLimitEditing(login);
+    const cur = usage[login]?.limit;
+    setLimitValue(cur ? String(cur) : "");
+  };
+  const saveLimit = async () => {
+    if (!limitEditing) return;
+    const n = limitValue.trim() === "" ? 0 : Number(limitValue);
+    if (!Number.isFinite(n) || n < 0 || !Number.isInteger(n)) {
+      toast.error("Лимит — целое число токенов (пусто или 0 = без лимита)");
+      return;
+    }
+    const res = await fetch("/api/admin/limits", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ login: limitEditing, tokenLimit: n }),
+    });
+    const data = await res.json().catch(() => null);
+    if (res.ok) {
+      toast.success(n > 0 ? `Лимит для «${limitEditing}»: ${n.toLocaleString("ru-RU")} токенов` : `Лимит для «${limitEditing}» снят`);
+      setLimitEditing(null);
+      loadLimits();
+    } else {
+      toast.error(data?.message ?? "Не удалось сохранить лимит");
+    }
+  };
 
   const handleDelete = async (id: string) => {
     const res = await fetch(`/api/admin/users?id=${encodeURIComponent(id)}`, { method: "DELETE" });
@@ -130,6 +171,43 @@ export default function AdminUsersPage() {
               label: "Статус",
               render: (val: boolean) => <StatusBadge status={val ? "active" : "closed"} />,
             },
+            {
+              key: "login",
+              label: "Токены",
+              render: (login: string) => {
+                const u = usage[login];
+                if (!u) return <span className="text-[rgba(165,187,179,0.3)] text-xs">—</span>;
+                const pct = u.limit ? Math.min(100, Math.round((u.used / u.limit) * 100)) : null;
+                return (
+                  <div className="min-w-[110px]">
+                    <span className="font-mono text-xs text-[rgba(220,235,230,0.85)]">
+                      {u.used.toLocaleString("ru-RU")}
+                      {u.limit ? <span className="text-[rgba(165,187,179,0.5)]"> / {u.limit.toLocaleString("ru-RU")}</span> : null}
+                    </span>
+                    {pct !== null && (
+                      <div className="mt-1 h-1 w-full overflow-hidden rounded-full bg-white/[0.06]">
+                        <div
+                          className={`h-full rounded-full ${pct >= 100 ? "bg-[rgba(220,112,112,0.8)]" : pct >= 80 ? "bg-[#F0C040]" : "bg-[#75D6A8]"}`}
+                          style={{ width: `${pct}%` }}
+                        />
+                      </div>
+                    )}
+                  </div>
+                );
+              },
+            },
+            {
+              key: "login",
+              label: "Лимит",
+              render: (login: string) => (
+                <button
+                  onClick={() => openLimitEditor(login)}
+                  className="rounded-lg px-2 py-1 text-xs text-mint transition-colors hover:bg-[rgba(143,184,174,0.1)]"
+                >
+                  {usage[login]?.limit ? "Изменить" : "Задать"}
+                </button>
+              ),
+            },
             { key: "lastLogin", label: "Последний вход", render: (v: string) => formatDate(v) },
             {
               key: "id",
@@ -190,6 +268,33 @@ export default function AdminUsersPage() {
             </button>
           </div>
         </div>
+      </AdminModal>
+
+      <AdminModal
+        isOpen={limitEditing !== null}
+        onClose={() => setLimitEditing(null)}
+        title={`Лимит токенов — ${limitEditing ?? ""}`}
+        footer={
+          <>
+            <GlassButton size="sm" variant="ghost" onClick={() => setLimitEditing(null)}>Отмена</GlassButton>
+            <GlassButton size="sm" onClick={saveLimit}>Сохранить</GlassButton>
+          </>
+        }
+      >
+        <GlassInput
+          label="Лимит токенов (пусто или 0 = без лимита)"
+          type="number"
+          value={limitValue}
+          onChange={(e) => setLimitValue(e.target.value)}
+          placeholder="например, 500000"
+        />
+        <p className="text-xs leading-relaxed text-[rgba(165,187,179,0.55)]">
+          Учитывается сумма входных и выходных токенов по всем чатам пользователя.
+          При достижении лимита новые сообщения блокируются шлюзом до изменения лимита.
+          {usage[limitEditing ?? ""] ? (
+            <> Сейчас использовано: <span className="text-[rgba(220,235,230,0.85)]">{usage[limitEditing ?? ""].used.toLocaleString("ru-RU")}</span>.</>
+          ) : null}
+        </p>
       </AdminModal>
     </div>
   );

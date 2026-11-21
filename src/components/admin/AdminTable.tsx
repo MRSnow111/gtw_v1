@@ -28,9 +28,9 @@ export function AdminTable({ columns, data, emptyMessage }: AdminTableProps) {
       <table className="w-full text-sm">
         <thead>
           <tr className="border-b border-[rgba(220,235,230,0.08)]">
-            {columns.map((col) => (
+            {columns.map((col, ci) => (
               <th
-                key={col.key}
+                key={`${col.key}-${ci}`}
                 className={cn(
                   "text-left py-3 px-4 text-xs font-medium uppercase tracking-wider text-[rgba(165,187,179,0.5)]",
                   col.className,
@@ -47,8 +47,8 @@ export function AdminTable({ columns, data, emptyMessage }: AdminTableProps) {
               key={row.id || i}
               className="border-b border-[rgba(220,235,230,0.05)] last:border-0 transition-colors hover:bg-[rgba(143,184,174,0.04)]"
             >
-              {columns.map((col) => (
-                <td key={col.key} className={cn("py-3 px-4 text-[rgba(220,235,230,0.8)]", col.className)}>
+              {columns.map((col, ci) => (
+                <td key={`${col.key}-${ci}`} className={cn("py-3 px-4 text-[rgba(220,235,230,0.8)]", col.className)}>
                   {col.render ? col.render(row[col.key], row) : String(row[col.key] ?? "—")}
                 </td>
               ))}

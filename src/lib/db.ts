@@ -45,6 +45,25 @@ export function getDb(): DatabaseSync {
         login  TEXT NOT NULL,
         detail TEXT NOT NULL DEFAULT ''
       );
+      CREATE TABLE IF NOT EXISTS usage_stats (
+        chat_id    TEXT PRIMARY KEY,
+        login      TEXT NOT NULL DEFAULT '',
+        model      TEXT NOT NULL DEFAULT '',
+        provider   TEXT NOT NULL DEFAULT '',
+        tokens_in  INTEGER NOT NULL DEFAULT 0,
+        tokens_out INTEGER NOT NULL DEFAULT 0,
+        turns      INTEGER NOT NULL DEFAULT 0,
+        tools      INTEGER NOT NULL DEFAULT 0,
+        speed      REAL,
+        source     TEXT NOT NULL DEFAULT 'unknown',
+        updated_at TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_usage_login ON usage_stats (login);
+      CREATE TABLE IF NOT EXISTS user_limits (
+        login       TEXT PRIMARY KEY,
+        token_limit INTEGER,
+        updated_at  TEXT NOT NULL
+      );
     `);
   }
   return db;

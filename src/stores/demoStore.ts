@@ -49,6 +49,9 @@ export interface DemoState {
   loadingChats: Record<string, boolean>;
   commands: typeof seedCommands;
   activeChatId: string | null;
+  /** LIVE: статистика сессии по чату (кадр session_info); в demo отсутствует. */
+  sessionInfoByChat?: Record<string, import("@/types/events").SessionInfo>;
+  requestSessionInfo?: (chatId: string) => void;
 
   setActiveChat: (id: string | null) => void;
   loadTurns: (chatId: string) => void;
