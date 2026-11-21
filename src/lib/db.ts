@@ -29,6 +29,22 @@ export function getDb(): DatabaseSync {
         created_at TEXT NOT NULL,
         last_login TEXT
       );
+      CREATE TABLE IF NOT EXISTS sessions (
+        id         TEXT PRIMARY KEY,
+        login      TEXT NOT NULL,
+        role       TEXT NOT NULL,
+        started_at TEXT NOT NULL,
+        last_seen  TEXT NOT NULL,
+        closed_at  TEXT
+      );
+      CREATE INDEX IF NOT EXISTS idx_sessions_login ON sessions (login, closed_at);
+      CREATE TABLE IF NOT EXISTS events (
+        id     INTEGER PRIMARY KEY AUTOINCREMENT,
+        ts     TEXT NOT NULL,
+        kind   TEXT NOT NULL,
+        login  TEXT NOT NULL,
+        detail TEXT NOT NULL DEFAULT ''
+      );
     `);
   }
   return db;

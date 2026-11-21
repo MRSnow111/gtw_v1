@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { verifySession } from "@/lib/authToken";
+import { touchSession } from "@/lib/activity";
 
 /** Текущая сессия по подписанной куке: { login, role } или 401. */
 export async function GET(request: NextRequest) {
@@ -7,5 +8,6 @@ export async function GET(request: NextRequest) {
   if (!session) {
     return NextResponse.json({ code: "unauthorized" }, { status: 401 });
   }
+  touchSession(session.login);
   return NextResponse.json({ login: session.login, role: session.role });
 }

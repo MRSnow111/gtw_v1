@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
-import { requireAdmin } from "@/lib/adminAuth";
+import { requireAdmin, getSession } from "@/lib/adminAuth";
 import { listUsers, addUser, removeUser, type Role } from "@/lib/userStore";
+import { logEvent } from "@/lib/activity";
 
 // GET /api/admin/users — env-владелец + пользователи из SQLite (без хешей).
 export async function GET(request: NextRequest) {
@@ -28,6 +29,8 @@ export async function POST(request: NextRequest) {
   }
   try {
     const user = addUser(String(body.login), String(body.password), (body.role ?? "user") as Role);
+    const actor = (await getSession(request))?.login ?? "?";
+    logEvent("user_created", actor, `Создан ${user.login} (${user.role})`);
     return NextResponse.json({ ok: true, user }, { status: 201 });
   } catch (e) {
     return NextResponse.json(
@@ -50,6 +53,8 @@ export async function DELETE(request: NextRequest) {
     if (!removed) {
       return NextResponse.json({ code: "not_found", message: "Пользователь не найден" }, { status: 404 });
     }
+    const actor = (await getSession(request))?.login ?? "?";
+    logEvent("user_deleted", actor, `Удалён ${id}`);
     return NextResponse.json({ ok: true });
   } catch (e) {
     return NextResponse.json(

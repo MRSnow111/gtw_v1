@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { signSession, type Role } from "@/lib/authToken";
 import { verifyUser, touchLastLogin } from "@/lib/userStore";
+import { openSession, logEvent } from "@/lib/activity";
 
 /**
  * Два аккаунта из env:
@@ -44,12 +45,15 @@ export async function POST(request: NextRequest) {
   }
 
   if (!role || !body.login) {
+    logEvent("login_fail", body.login ?? "?", "Неверный логин или пароль");
     return NextResponse.json(
       { code: "bad_credentials", message: "Неверный логин или пароль" },
       { status: 401 }
     );
   }
 
+  openSession(body.login, role);
+  logEvent("login_ok", body.login, `Роль: ${role}`);
   const token = await signSession(body.login, role);
   const res = NextResponse.json({ ok: true, login: body.login, role });
   res.cookies.set("gtw-auth", token, {

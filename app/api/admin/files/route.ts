@@ -6,8 +6,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import fs from "node:fs";
 import path from "node:path";
-import { requireAdmin } from "@/lib/adminAuth";
+import { requireAdmin, getSession } from "@/lib/adminAuth";
 import { dataDir } from "@/lib/db";
+import { logEvent } from "@/lib/activity";
 
 const ROOT = path.resolve(process.env.GTW_FILES_DIR || path.join(dataDir(), "files"));
 const MAX_SIZE = 1024 * 1024; // 1 МБ
@@ -86,6 +87,8 @@ export async function POST(request: NextRequest) {
   if (fs.existsSync(p) && fs.statSync(p).isDirectory()) return bad("По этому пути директория");
   fs.mkdirSync(path.dirname(p), { recursive: true });
   fs.writeFileSync(p, body.content, "utf8");
+  const actor = (await getSession(request))?.login ?? "?";
+  logEvent("file_saved", actor, body.path);
   return NextResponse.json({ ok: true });
 }
 
@@ -98,5 +101,7 @@ export async function DELETE(request: NextRequest) {
   if (!p || p === ROOT) return bad("Недопустимый путь");
   if (!fs.existsSync(p)) return bad("Путь не найден", 404);
   fs.rmSync(p, { recursive: true, force: true });
+  const actor = (await getSession(request))?.login ?? "?";
+  logEvent("file_deleted", actor, rel);
   return NextResponse.json({ ok: true });
 }
