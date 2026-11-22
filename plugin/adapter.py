@@ -108,17 +108,27 @@ class GTWAdapter(BasePlatformAdapter):
                                  user_id=user_id, user_name=user_name)
 
     def _session_settings(self, chat_id: str) -> dict:
-        """Модель/провайдер/session_key через публичный seam ядра (feature-detect)."""
+        """Модель/провайдер/session_key: seam ядра (feature-detect) + запасной config.model."""
         fn = getattr(self, "get_session_model_settings", None)
-        if not callable(fn):
-            return {}
         st = self._stats(chat_id)
+        if callable(fn):
+            try:
+                settings = fn(self._source_for(chat_id, st["user_id"] or "gtw", st["user_name"] or "GTW"))
+                if settings:
+                    return dict(settings)
+            except Exception as e:
+                logger.debug("GTW: session model settings unavailable: %s", e)
         try:
-            settings = fn(self._source_for(chat_id, st["user_id"] or "gtw", st["user_name"] or "GTW"))
-            return dict(settings) if settings else {}
-        except Exception as e:
-            logger.debug("GTW: session model settings unavailable: %s", e)
-            return {}
+            from hermes_cli.config import load_config
+            cfg = load_config() or {}
+            m = cfg.get("model") if isinstance(cfg.get("model"), dict) else {}
+            model = str(m.get("default") or m.get("model") or "")
+            if model:
+                return {"model": model, "provider": str(m.get("provider") or ""),
+                        "base_url": str(m.get("base_url") or ""), "session_key": ""}
+        except Exception:
+            pass
+        return {}
 
     def _agent_usage(self, session_key: str) -> Optional[dict]:
         """Счётчики токенов живого агента из кэша gateway. Приватный API ядра —
@@ -345,8 +355,40 @@ class GTWAdapter(BasePlatformAdapter):
         else:
             await ws.send_json({"type": "error", "error": f"unknown_type:{kind}"})
 
+    def _catalog_direct(self) -> tuple[list, dict]:
+        """Запасной каталог напрямую через list_picker_providers + config.
+
+        Не зависит от runner-контекста миксина (который может вернуть None без
+        runner/профиля). Тот же контракт, что у CLI-пикера; кэш каталога на диске.
+        Выполнять в asyncio.to_thread (дисковый I/O)."""
+        from hermes_cli.config import load_config, get_compatible_custom_providers
+        from hermes_cli.model_switch_providers import list_picker_providers
+        cfg = load_config() or {}
+        m = cfg.get("model") if isinstance(cfg.get("model"), dict) else {}
+        cur = {"model": str(m.get("default") or m.get("model") or ""),
+               "provider": str(m.get("provider") or ""),
+               "base_url": str(m.get("base_url") or "")}
+        catalog_cfg = cfg.get("model_catalog")
+        rows = list_picker_providers(
+            current_provider=cur["provider"] or "openrouter",
+            current_base_url=cur["base_url"], current_model=cur["model"],
+            user_providers=(cfg.get("providers") or {}),
+            custom_providers=get_compatible_custom_providers(cfg),
+            max_models=100, include_moa=True,
+            excluded_providers=(catalog_cfg.get("excluded_providers")
+                                if isinstance(catalog_cfg, dict) else None),
+            probe_custom_providers=False, probe_current_custom_provider=False,
+            non_blocking_catalogs=True)
+        providers = []
+        for r in rows or []:
+            name = str(r.get("name") or r.get("slug") or "")
+            if name:
+                providers.append({"name": name,
+                                  "models": [str(x) for x in (r.get("models") or [])][:100]})
+        return providers, cur
+
     async def _send_models(self, ws, frame: dict[str, Any]) -> None:
-        """Каталог моделей через публичный seam ядра (feature-detect, async-aware)."""
+        """Каталог моделей: seam ядра (feature-detect) + запасной прямой каталог."""
         chat_id = str(frame.get("chat_id") or "main")
         settings = self._session_settings(chat_id)
         current = {"model": str(settings.get("model") or ""), "provider": str(settings.get("provider") or "")}
@@ -366,6 +408,15 @@ class GTWAdapter(BasePlatformAdapter):
                         providers.append({"name": name, "models": [str(m) for m in models][:100]})
             except Exception as e:
                 logger.warning("GTW: model catalog unavailable: %s", e)
+        # Запасной путь: прямой каталог из config — работает и без runner-контекста.
+        if not providers:
+            try:
+                direct, cur = await asyncio.to_thread(self._catalog_direct)
+                providers = direct
+                if not current["model"] and cur["model"]:
+                    current = {"model": cur["model"], "provider": cur["provider"]}
+            except Exception as e:
+                logger.warning("GTW: direct model catalog unavailable: %s", e)
         await ws.send_json({"type": "models", "chat_id": chat_id, "current": current, "providers": providers})
 
     async def _set_model(self, ws, frame: dict[str, Any]) -> None:
