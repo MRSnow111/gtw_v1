@@ -42,6 +42,7 @@ export interface SessionInfo {
 
 export interface ModelProvider {
   name: string;
+  label?: string;
   models: string[];
 }
 
@@ -85,7 +86,7 @@ export type GtwServerFrame =
   | { type: "history"; chat_id: string; items: HistoryItem[] }
   | { type: "session_info"; info: SessionInfo }
   | { type: "sessions"; items: SessionInfo[] }
-  | { type: "models"; chat_id: string; current: { model: string; provider: string }; providers: ModelProvider[] }
+  | { type: "models"; chat_id: string; current: { model: string; provider: string }; providers: ModelProvider[]; restricted?: boolean }
   | { type: "set_model_ack"; chat_id: string; model: string; ok: boolean }
   | { type: "status"; chat_id: string; status_key?: string; content: string; metadata?: Record<string, unknown> }
-  | { type: "error"; error: string; limit?: number; used?: number };
+  | { type: "error"; error: string; limit?: number; used?: number; model?: string; reason?: string };

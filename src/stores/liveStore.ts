@@ -339,6 +339,17 @@ function onFrame(frame: GtwServerFrame) {
         }
       } else if (frame.error === "forbidden") {
         toast.error("Недостаточно прав для этого действия");
+      } else if (frame.error === "model_forbidden") {
+        const m = frame.model ? ` «${frame.model}»` : "";
+        toast.error(`Модель${m} недоступна. Выберите разрешённую в пикере моделей.`);
+        const entries: [string, Turn[]][] = Object.entries(useLiveStore.getState().turnsByChat);
+        for (const [chatId, turns] of entries) {
+          const t = turns[turns.length - 1];
+          if (t?.kind === "agent" && t.agentState === "running") {
+            patchTurn(chatId, t.id, { agentState: "error" });
+            break;
+          }
+        }
       } else {
         toast.error(`Шлюз: ${frame.error}`);
       }

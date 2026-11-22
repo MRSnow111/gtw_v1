@@ -64,6 +64,11 @@ export function getDb(): DatabaseSync {
         token_limit INTEGER,
         updated_at  TEXT NOT NULL
       );
+      CREATE TABLE IF NOT EXISTS user_models (
+        login      TEXT PRIMARY KEY,
+        models     TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
     `);
   }
   return db;

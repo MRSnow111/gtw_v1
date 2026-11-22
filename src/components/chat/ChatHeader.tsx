@@ -6,9 +6,10 @@ import { Copy, Info, Maximize2 } from "lucide-react";
 import { toast } from "sonner";
 import { useWsStore } from "@/stores/wsStore";
 import { useUiStore } from "@/stores/uiStore";
-import { useAgentStore } from "@/stores/agentStore";
+import { useAgentStore, DEMO_MODE } from "@/stores/agentStore";
 import { IconButton, StatusDot } from "@/components/ui/glass";
 import { SessionInfoPanel } from "@/components/chat/SessionInfoPanel";
+import { ModelPicker } from "@/components/chat/ModelPicker";
 
 export function ChatHeader({ title }: { title?: string }) {
   const status = useWsStore((s) => s.status);
@@ -37,6 +38,7 @@ export function ChatHeader({ title }: { title?: string }) {
         <StatusDot tone={tone} />
         <span className="text-[11.5px] text-dim">{text}</span>
       </div>
+      {!DEMO_MODE && activeChatId && <ModelPicker chatId={activeChatId} />}
       <IconButton
         aria-label="Информация о сессии"
         title="Информация о сессии"

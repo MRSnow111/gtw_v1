@@ -6,8 +6,8 @@
  * браузер никогда не видит токен. Апстрим по умолчанию ws://127.0.0.1:8765/ws.
  *
  * Прокси также: подставляет login из куки в user_message (защита от спуфинга),
- * проверяет лимиты токенов (user_limits) и роль для админ-кадров
- * (sessions/models/set_model), накапливает usage_stats из кадров session_info.
+ * проверяет лимиты токенов (user_limits), белый список моделей (user_models)
+ * и роль для админ-кадров (sessions), накапливает usage_stats из session_info.
  *
  * Env: PORT (3000), GTW_WS_URL, GTW_TOKEN, GTW_DATA_DIR, NODE_ENV.
  * Запуск: npm start  (NODE_ENV=production node server.js)
@@ -55,6 +55,11 @@ function getDb() {
         login       TEXT PRIMARY KEY,
         token_limit INTEGER,
         updated_at  TEXT NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS user_models (
+        login      TEXT PRIMARY KEY,
+        models     TEXT NOT NULL,
+        updated_at TEXT NOT NULL
       );
     `);
   }
@@ -113,6 +118,29 @@ function recordUsage(info) {
   }
 }
 const chatOwners = new Map(); // chat_id -> login (из user_message этой сессии)
+const chatModels = new Map(); // chat_id -> "provider/model" (текущая модель из кадров шлюза)
+
+/** Белый список моделей логина (user_models): null = все разрешены. fail-open при сбое БД. */
+function allowlistFor(login) {
+  try {
+    const r = getDb().prepare("SELECT models FROM user_models WHERE login = ?").get(login);
+    if (!r) return null;
+    const arr = JSON.parse(r.models);
+    return Array.isArray(arr) && arr.length ? arr : null;
+  } catch (e) {
+    console.error("[gtw-proxy] allowlist check failed:", e.message);
+    return null;
+  }
+}
+/** Разрешена ли модель: "provider/model" или голый "model" (матч по суффиксу). */
+function modelAllowed(allow, target) {
+  if (!allow || !allow.length) return true;
+  const t = String(target || "").trim();
+  if (!t) return false;
+  if (allow.includes(t)) return true;
+  if (!t.includes("/")) return allow.some((a) => a.endsWith("/" + t));
+  return false;
+}
 
 /** Проверка куки gtw-auth: формат v1.<b64url(payload)>.<b64url(HMAC-SHA256)>, срок не истёк. */
 function parseSessionCookie(token) {
@@ -218,18 +246,39 @@ app.prepare().then(() => {
       pending.length = 0;
     });
     upstream.on("message", (data, isBinary) => {
-      if (client.readyState === WebSocket.OPEN) {
-        try { client.send(data, { binary: isBinary }); } catch {}
-      }
-      // учёт токенов: сниффим только кадры session_info (дёшево по префиксу)
+      let outData = data;
+      // сниффим служебные кадры: учёт токенов, текущая модель, фильтр каталога
       if (!isBinary && data.length < 256 * 1024) {
-        const head = data.slice(0, 40).toString("utf8");
-        if (head.includes('"session_info"')) {
+        const head = data.slice(0, 48).toString("utf8");
+        if (head.includes('"session_info"') || head.includes('"models"') || head.includes('"set_model_ack"')) {
           try {
             const frame = JSON.parse(data.toString("utf8"));
-            if (frame.type === "session_info" && frame.info) recordUsage(frame.info);
+            if (frame.type === "session_info" && frame.info) {
+              recordUsage(frame.info);
+              const inf = frame.info;
+              if (inf.provider && inf.model) chatModels.set(String(inf.chat_id), `${inf.provider}/${inf.model}`);
+            } else if (frame.type === "models") {
+              const cur = frame.current;
+              if (cur && cur.provider && cur.model) chatModels.set(String(frame.chat_id), `${cur.provider}/${cur.model}`);
+              if (!isAdmin) {
+                const allow = allowlistFor(login);
+                if (allow) {
+                  frame.providers = (frame.providers || [])
+                    .map((p) => ({ ...p, models: (p.models || []).filter((m) => allow.includes(`${p.name}/${m}`)) }))
+                    .filter((p) => p.models && p.models.length);
+                  frame.restricted = true;
+                  outData = Buffer.from(JSON.stringify(frame), "utf8");
+                }
+              }
+            } else if (frame.type === "set_model_ack" && frame.ok) {
+              const mdl = String(frame.model || "");
+              if (mdl.includes("/")) chatModels.set(String(frame.chat_id), mdl);
+            }
           } catch {}
         }
+      }
+      if (client.readyState === WebSocket.OPEN) {
+        try { client.send(outData, { binary: isBinary }); } catch {}
       }
     });
     upstream.on("close", (code, reason) => {
@@ -254,14 +303,44 @@ app.prepare().then(() => {
           sendToClient({ type: "error", error: "quota_exceeded", limit, used });
           return null;
         }
+        if (!isAdmin) {
+          const allow = allowlistFor(login);
+          const cmd = String(frame.text || "").trim().match(/^\/model(?:@[\w-]+)?\s+(.+)$/i);
+          if (cmd) {
+            // /model в тексте чата — обход пикера; гейтим по белому списку
+            const target = cmd[1].trim();
+            if (!modelAllowed(allow, target)) {
+              sendToClient({ type: "error", error: "model_forbidden", model: target });
+              return null;
+            }
+          } else {
+            // текущая модель чата должна быть разрешена (иначе — выбрать в пикере)
+            const cur = chatModels.get(chatId);
+            if (cur && !modelAllowed(allow, cur)) {
+              sendToClient({ type: "error", error: "model_forbidden", model: cur, reason: "current" });
+              return null;
+            }
+          }
+        }
         // login из подписанной куки, не из клиента (защита от спуфинга)
         frame.user_id = login;
         frame.user_name = login;
         return JSON.stringify(frame);
       }
-      if (type === "sessions" || type === "models" || type === "set_model") {
+      if (type === "sessions") {
         if (!isAdmin) {
           sendToClient({ type: "error", error: "forbidden" });
+          return null;
+        }
+        return raw;
+      }
+      if (type === "models") {
+        // каталог доступен всем; для не-админа ответ фильтруется по белому списку
+        return raw;
+      }
+      if (type === "set_model") {
+        if (!isAdmin && !modelAllowed(allowlistFor(login), String(frame.model || ""))) {
+          sendToClient({ type: "error", error: "model_forbidden", model: String(frame.model || "") });
           return null;
         }
         return raw;
