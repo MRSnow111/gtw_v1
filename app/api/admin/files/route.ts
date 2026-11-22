@@ -2,6 +2,10 @@
  * Файловый менеджер админки: реальное чтение/запись файлов в выделенной
  * директории (GTW_FILES_DIR || <data>/files). Не произвольная ФС: пути
  * резолвятся внутри корня, traversal наружу запрещён. Текстовые файлы ≤ 1 МБ.
+ *
+ * turbopackIgnore: корень берётся из env (GTW_FILES_DIR), поэтому Turbopack не
+ * может статически ограничить путь и трассирует весь проект. Доступ к ФС здесь
+ * намеренный и ограничен safeResolve — отключаем трассировку для этих вызовов.
  */
 import { NextRequest, NextResponse } from "next/server";
 import fs from "node:fs";
@@ -10,11 +14,11 @@ import { requireAdmin, getSession } from "@/lib/adminAuth";
 import { dataDir } from "@/lib/db";
 import { logEvent } from "@/lib/activity";
 
-const ROOT = path.resolve(process.env.GTW_FILES_DIR || path.join(dataDir(), "files"));
+const ROOT = path.resolve(/*turbopackIgnore: true*/ process.env.GTW_FILES_DIR || path.join(dataDir(), "files"));
 const MAX_SIZE = 1024 * 1024; // 1 МБ
 
 function ensureRoot(): void {
-  fs.mkdirSync(ROOT, { recursive: true });
+  fs.mkdirSync(/*turbopackIgnore: true*/ ROOT, { recursive: true });
 }
 
 /** Резолвит относительный путь внутри ROOT; null — попытка выхода наружу. */
@@ -39,13 +43,13 @@ export async function GET(request: NextRequest) {
   const rel = url.searchParams.get("path") ?? "";
   const p = safeResolve(rel);
   if (!p) return bad("Недопустимый путь");
-  if (!fs.existsSync(p)) return bad("Путь не найден", 404);
+  if (!fs.existsSync(/*turbopackIgnore: true*/ p)) return bad("Путь не найден", 404);
 
-  const stat = fs.statSync(p);
+  const stat = fs.statSync(/*turbopackIgnore: true*/ p);
   if (url.searchParams.get("content") === "1") {
     if (stat.isDirectory()) return bad("Это директория");
     if (stat.size > MAX_SIZE) return bad("Файл больше 1 МБ — просмотр недоступен", 413);
-    const content = fs.readFileSync(p, "utf8");
+    const content = fs.readFileSync(/*turbopackIgnore: true*/ p, "utf8");
     return NextResponse.json({
       path: rel,
       content,
@@ -56,10 +60,10 @@ export async function GET(request: NextRequest) {
 
   if (!stat.isDirectory()) return bad("Это файл, не директория");
   const entries = fs
-    .readdirSync(p, { withFileTypes: true })
+    .readdirSync(/*turbopackIgnore: true*/ p, { withFileTypes: true })
     .map((e) => {
-      const full = path.join(p, e.name);
-      const s = fs.statSync(full);
+      const full = path.join(/*turbopackIgnore: true*/ p, e.name);
+      const s = fs.statSync(/*turbopackIgnore: true*/ full);
       const isDir = e.isDirectory();
       return {
         name: e.name,
@@ -84,9 +88,9 @@ export async function POST(request: NextRequest) {
   const p = safeResolve(body.path);
   if (!p || p === ROOT) return bad("Недопустимый путь");
   if (Buffer.byteLength(body.content, "utf8") > MAX_SIZE) return bad("Содержимое больше 1 МБ", 413);
-  if (fs.existsSync(p) && fs.statSync(p).isDirectory()) return bad("По этому пути директория");
-  fs.mkdirSync(path.dirname(p), { recursive: true });
-  fs.writeFileSync(p, body.content, "utf8");
+  if (fs.existsSync(/*turbopackIgnore: true*/ p) && fs.statSync(/*turbopackIgnore: true*/ p).isDirectory()) return bad("По этому пути директория");
+  fs.mkdirSync(/*turbopackIgnore: true*/ path.dirname(p), { recursive: true });
+  fs.writeFileSync(/*turbopackIgnore: true*/ p, body.content, "utf8");
   const actor = (await getSession(request))?.login ?? "?";
   logEvent("file_saved", actor, body.path);
   return NextResponse.json({ ok: true });
@@ -99,8 +103,8 @@ export async function DELETE(request: NextRequest) {
   const rel = new URL(request.url).searchParams.get("path") ?? "";
   const p = safeResolve(rel);
   if (!p || p === ROOT) return bad("Недопустимый путь");
-  if (!fs.existsSync(p)) return bad("Путь не найден", 404);
-  fs.rmSync(p, { recursive: true, force: true });
+  if (!fs.existsSync(/*turbopackIgnore: true*/ p)) return bad("Путь не найден", 404);
+  fs.rmSync(/*turbopackIgnore: true*/ p, { recursive: true, force: true });
   const actor = (await getSession(request))?.login ?? "?";
   logEvent("file_deleted", actor, rel);
   return NextResponse.json({ ok: true });
