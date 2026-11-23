@@ -616,21 +616,69 @@ class GTWAdapter(BasePlatformAdapter):
         await ws.send_json({"type": "models", "chat_id": chat_id, "current": current, "providers": providers})
 
     async def _set_model(self, ws, frame: dict[str, Any]) -> None:
-        """Переключение модели командой /model (ядро само подтвердит в чат)."""
+        """Переключение модели (ядро само подтвердит в чат).
+
+        Пикер шлёт «DisplayName/model». Текстовая команда /model без --provider идёт по
+        PATH B ядра и НЕ снимает префикс custom-провайдера: роутерная модель вида
+        «Selectel_Router_api/anthropic/claude-haiku-5.5» целиком уходит именем модели в
+        ТЕКУЩИЙ провайдер и падает с «not found in this provider's model listing».
+        Переводим в PATH A: «/model <model> --provider <slug>», slug берём из seam-каталога
+        по отображаемому имени (тому же, что в пикере)."""
         chat_id = str(frame.get("chat_id") or "main")
         model = str(frame.get("model") or "").strip()
         ok = False
         if model and len(model) <= 200 and "\n" not in model and not model.startswith("/"):
             st = self._stats(chat_id)
             source = self._source_for(chat_id, st["user_id"] or "gtw", st["user_name"] or "GTW")
+            command = await self._model_switch_command(model, source)
             try:
                 await self.handle_message(MessageEvent(
-                    text=f"/model {model}", message_type=MessageType.COMMAND, source=source,
+                    text=command, message_type=MessageType.COMMAND, source=source,
                     message_id=_ms_id(), timestamp=datetime.datetime.now()))
                 ok = True
             except Exception as e:
                 logger.warning("GTW: set_model failed: %s", e)
         await ws.send_json({"type": "set_model_ack", "chat_id": chat_id, "model": model, "ok": ok})
+
+    async def _model_switch_command(self, model: str, source: Any) -> str:
+        """«DisplayName/model» -> «/model <model> --provider <slug>» (PATH A).
+
+        Имя провайдера не содержит «/», поэтому первый «/» всегда отделяет имя от id модели
+        (сам id может быть роутерным, «anthropic/claude-haiku-5.5»). Если имя не найдено в
+        каталоге — оставляем исходную строку (запасной PATH B: голую «vendor/model» ядро
+        маршрутизирует само по объявленным моделям провайдеров)."""
+        if "/" not in model:
+            return f"/model {model}"
+        display, _, model_id = model.partition("/")
+        display, model_id = display.strip(), model_id.strip()
+        if not display or not model_id:
+            return f"/model {model}"
+        slug = await self._provider_slug_for_name(display, source)
+        if slug:
+            return f"/model {model_id} --provider {slug}"
+        return f"/model {model}"
+
+    async def _provider_slug_for_name(self, display: str, source: Any) -> str:
+        """Slug провайдера по отображаемому имени из seam-каталога (имя совпадает с пикером).
+
+        resolve_provider_full не годится: встроенные label вроде «Alibaba Cloud (Token Plan)»
+        он не резолвит, а seam-строки несут точную пару name/slug для всех провайдеров."""
+        fn = getattr(self, "list_session_model_picker_providers", None)
+        if not callable(fn):
+            return ""
+        try:
+            result = fn(source)
+            if asyncio.iscoroutine(result):
+                result = await asyncio.wait_for(result, timeout=15)
+            want = display.strip().lower()
+            for p in result or []:
+                name = str(getattr(p, "name", None) or (p.get("name") if isinstance(p, dict) else "") or "")
+                slug = str(getattr(p, "slug", None) or (p.get("slug") if isinstance(p, dict) else "") or "")
+                if name and slug and name.strip().lower() == want:
+                    return slug
+        except Exception as e:
+            logger.warning("GTW: provider slug lookup failed: %s", e)
+        return ""
 
     async def _inbound_message(self, frame: dict[str, Any]) -> None:
         text = str(frame.get("text") or "").strip()
