@@ -321,6 +321,7 @@ app.prepare().then(() => {
     const pending = []; // кадры браузера до открытия апстрима ({data, isBinary})
     let opened = false;
     let closed = false;
+    let bootModels = true; // первый кадр models — bootstrap-каталог для карты slug→display
 
     const closeBoth = (code, reason) => {
       if (closed) return;
@@ -353,6 +354,10 @@ app.prepare().then(() => {
 
     upstream.on("open", () => {
       opened = true;
+      // B1: наполняем карту slug→display ДО первого session_info (иначе новый чат
+      // restricted-юзера получает chatModels в slug-форме и гейт блокирует РАЗРЕШЁННУЮ
+      // модель). Служебный bootstrap-кадр в браузер не форвардим (флаг bootModels).
+      try { upstream.send(JSON.stringify({ type: "models", chat_id: "main", user_id: login, user_name: login }), { binary: false }); } catch {}
       for (const { data, isBinary } of pending) {
         try { upstream.send(data, { binary: isBinary }); } catch {}
       }
@@ -373,6 +378,8 @@ app.prepare().then(() => {
               sendQuota(); // обновляем индикатор лимита после учёта токенов
             } else if (frame.type === "models") {
               learnProviders(frame.providers); // карта slug→display для гейта/пикера
+              // bootstrap-каталог (запрос при open): только наполняем карту, в браузер не шлём
+              if (bootModels) { bootModels = false; return; }
               const cur = frame.current;
               if (cur && cur.provider && cur.model) {
                 // current к display: пикер подсвечивает текущую модель (ключи каталога —
