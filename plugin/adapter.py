@@ -44,10 +44,16 @@ import asyncio
 import contextlib
 import dataclasses
 import datetime
+import json
 import logging
+import re
+import subprocess
+import sys
+import threading
 import time
 import uuid
 from collections import deque
+from pathlib import Path
 from typing import Any, Optional
 
 from gateway.platforms._shared import (
@@ -85,6 +91,173 @@ class GTWAdapter(BasePlatformAdapter):
         self._history: dict[str, deque] = {}
         self._approval_sessions: dict[str, str] = {}  # request_id -> session_key
         self._chat_stats: dict[str, dict] = {}  # chat_id -> статистика сессии
+        # ── изоляция пользователей по профилям Hermes (multiplex) ──
+        self._served_cache: set = set()          # имена профилей, уже обслуживаемых шлюзом
+        self._routed_cache: set = set()          # имена профилей с уже инжектированным маршрутом
+        self._prov_locks: dict = {}              # name -> threading.Lock (провизион)
+        self._prov_guard = threading.Lock()
+        self._persist_lock = threading.Lock()
+        self._multiplex_cache: Optional[bool] = None
+
+    # ── маршрутизация пользователя в его профиль Hermes ──────────────────────
+
+    def _multiplex_on(self) -> bool:
+        if self._multiplex_cache is None:
+            try:
+                from hermes_cli.config import load_config
+                gw = (load_config() or {}).get("gateway") or {}
+                self._multiplex_cache = bool(gw.get("multiplex_profiles"))
+            except Exception:
+                self._multiplex_cache = False
+        return self._multiplex_cache
+
+    @staticmethod
+    def _user_profile_name(login: str) -> str:
+        slug = re.sub(r"[^a-z0-9_-]+", "-", str(login).lower()).strip("-_")[:56]
+        return "gtw-" + (slug or "user")
+
+    @staticmethod
+    def _profiles_dir() -> Path:
+        from hermes_constants import get_hermes_home
+        return Path(get_hermes_home()) / "profiles"
+
+    def _read_served(self) -> set:
+        try:
+            from hermes_constants import get_hermes_home
+            d = json.loads((Path(get_hermes_home()) / "gateway_state.json").read_text())
+            return set(d.get("served_profiles") or [])
+        except Exception:
+            return set()
+
+    def _is_served_fast(self, name: str) -> bool:
+        if name in self._served_cache:
+            return True
+        served = self._read_served()
+        self._served_cache |= served
+        return name in served
+
+    def _prov_lock(self, name: str) -> threading.Lock:
+        with self._prov_guard:
+            lk = self._prov_locks.get(name)
+            if lk is None:
+                lk = threading.Lock()
+                self._prov_locks[name] = lk
+            return lk
+
+    def _create_profile(self, name: str) -> None:
+        """Создать профиль пользователя клонированием default (модели/ключи/навыки),
+        затем обнулить унаследованную память владельца. Каналы платформ не клонируются,
+        поэтому второй WS-сервер на 8765 не поднимается. Выполнять в отдельном потоке."""
+        cmd = [sys.executable, "-m", "hermes_cli.main", "profile", "create", name,
+               "--clone-from", "default", "--no-alias"]
+        subprocess.run(cmd, capture_output=True, text=True, timeout=180)
+        mem = self._profiles_dir() / name / "memories"
+        for f in ("MEMORY.md", "USER.md"):
+            try:
+                (mem / f).write_text("")
+            except Exception:
+                pass
+
+    def _ensure_provisioned_served(self, name: str, timeout: float = 30.0) -> bool:
+        """Гарантировать, что профиль создан и обслуживается мультиплексором.
+        Блокирующий (вызывать через asyncio.to_thread). Кэш делает повторные вызовы быстрыми."""
+        if self._is_served_fast(name):
+            return True
+        with self._prov_lock(name):
+            if self._is_served_fast(name):
+                return True
+            if not (self._profiles_dir() / name).exists():
+                try:
+                    self._create_profile(name)
+                except Exception as e:
+                    logger.warning("GTW: profile create %s failed: %s", name, e)
+                    return False
+            deadline = time.time() + timeout
+            while time.time() < deadline:
+                if self._is_served_fast(name):
+                    return True
+                time.sleep(0.5)
+            logger.warning("GTW: profile %s not served within %.0fs", name, timeout)
+            return False
+
+    def _inject_route(self, name: str, login: str) -> bool:
+        """Добавить маршрут platform=gtw user_id=login -> profile=name в живой конфиг
+        шлюза (runner.config.profile_routes). Оба потребителя — штампование source.profile
+        в build_source (_profile_name_for_source) и admission (_runtime_profile) — читают
+        этот список, поэтому маршрут действует БЕЗ рестарта. Персист в config.yaml — для
+        durability. Атомарная замена списка безопасна для конкурентных читателей."""
+        runner = getattr(self, "gateway_runner", None)
+        cfg = getattr(runner, "config", None)
+        if cfg is None:
+            return False
+        from gateway.profile_routing import ProfileRoute
+        routes = list(getattr(cfg, "profile_routes", []) or [])
+        if any(r.platform == "gtw" and r.user_id == login for r in routes):
+            return True  # маршрут уже есть (в памяти или загружен из yaml после рестарта)
+        route = ProfileRoute(name=name, platform="gtw", profile=name,
+                             user_id=login, enabled=True)
+        cfg.profile_routes = routes + [route]
+        try:
+            self._persist_routes()
+        except Exception as e:
+            logger.warning("GTW: persist routes failed: %s", e)
+        return True
+
+    def _persist_routes(self) -> None:
+        """Записать полный текущий список маршрутов в config.yaml (переживает рестарт)."""
+        with self._persist_lock:
+            runner = getattr(self, "gateway_runner", None)
+            routes = list(getattr(getattr(runner, "config", None), "profile_routes", []) or [])
+            data = []
+            for r in routes:
+                d = {"name": r.name, "platform": r.platform, "profile": r.profile,
+                     "enabled": bool(r.enabled)}
+                for fld in ("user_id", "guild_id", "chat_id", "thread_id", "bot_profile"):
+                    v = getattr(r, fld, None)
+                    if v:
+                        d[fld] = v
+                data.append(d)
+            cmd = [sys.executable, "-m", "hermes_cli.main", "config", "set",
+                   "gateway.profile_routes", json.dumps(data)]
+            subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+
+    def _ensure_user_routed(self, login: str) -> bool:
+        """Полный цикл изоляции пользователя: профиль создан + обслуживается + маршрут
+        инжектирован. Блокирующий (вызывать через asyncio.to_thread). Идемпотентно."""
+        name = self._user_profile_name(login)
+        if name in self._routed_cache:
+            return True
+        if not self._ensure_provisioned_served(name):
+            return False
+        if self._inject_route(name, login):
+            self._routed_cache.add(name)
+            return True
+        return False
+
+    def _kick_provision(self, name: str, login: str) -> None:
+        """Фоновый провизион+маршрут (не блокирует цикл событий) для путей models/session_info."""
+        if name in self._routed_cache:
+            return
+        lk = self._prov_lock(name)
+        if lk.locked():
+            return
+        threading.Thread(target=lambda: self._ensure_user_routed(login),
+                         daemon=True).start()
+
+    def build_source(self, *args, **kwargs):
+        """Override: нативное штампование source.profile делает ядро по маршруту
+        (profile_routes). Здесь лишь запускаем фоновый провизион+инжекцию маршрута,
+        если профиль пользователя ещё не готов. Авторитетный цикл первого сообщения —
+        в _inbound_message (await to_thread(_ensure_user_routed))."""
+        source = super().build_source(*args, **kwargs)
+        login = kwargs.get("user_id")
+        if login is None and len(args) >= 4:
+            login = args[3]  # chat_id, chat_name, chat_type, user_id
+        if login and str(login) != "gtw" and self._multiplex_on():
+            name = self._user_profile_name(str(login))
+            if name not in self._routed_cache:
+                self._kick_provision(name, str(login))
+        return source
 
     # ── статистика сессий ────────────────────────────────────────────────────
 
@@ -452,6 +625,15 @@ class GTWAdapter(BasePlatformAdapter):
         st["turns"] += 1
         self._touch(chat_id)
         self._remember(chat_id, "user", text, message_id)
+        # Изоляция: гарантировать профиль пользователя + маршрут до построения source.
+        # Блокирующий провизион+инжекция маршрута — в отдельном потоке (цикл свободен).
+        if user_id != "gtw" and self._multiplex_on():
+            try:
+                await asyncio.wait_for(
+                    asyncio.to_thread(self._ensure_user_routed, user_id),
+                    timeout=60)
+            except Exception as e:
+                logger.warning("GTW: ensure user routed for %s: %s", user_id, e)
         source = self.build_source(chat_id=chat_id, chat_name=chat_id, chat_type="dm",
                                    user_id=user_id, user_name=user_name)
         await self.handle_message(MessageEvent(
