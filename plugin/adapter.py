@@ -688,8 +688,16 @@ class GTWAdapter(BasePlatformAdapter):
 
     # ── outbound: agent -> browser ───────────────────────────────────────────
 
+    # Служебный надж «no home channel» (gateway.notify.no_home_channel) бессмыслен для
+    # GTW: веб-UI с явными чатами, а не messaging-платформа с cron-доставкой в home channel.
+    # Подавляем его в адаптере (не правим ядро Hermes — переживает обновления). Маркеры
+    # en+ru локалей + обязательный sethome, чтобы не задеть обычный ответ агента.
+    _HOME_NUDGE_MARKERS = ("No home channel is set for", "не задан домашний канал")
+
     async def send(self, chat_id: str, content: str, reply_to: Optional[str] = None,
                    metadata: Optional[dict[str, Any]] = None):
+        if "sethome" in content and any(m in content for m in self._HOME_NUDGE_MARKERS):
+            return SendResult(success=True, message_id=_ms_id())
         message_id = _ms_id()
         meta = metadata or {}
         st = self._stats(chat_id)
