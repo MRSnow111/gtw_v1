@@ -27,6 +27,7 @@ export default function AdminUsersPage() {
   const [modelSel, setModelSel] = useState<string[]>([]);
   const [catalog, setCatalog] = useState<Array<{ name: string; label?: string; models: string[] }>>([]);
   const [catalogLoading, setCatalogLoading] = useState(false);
+  const [modelQuery, setModelQuery] = useState("");
 
   const loadUsers = () => {
     fetch("/api/admin/users")
@@ -91,6 +92,7 @@ export default function AdminUsersPage() {
 
   const openModelEditor = (login: string) => {
     setModelEditing(login);
+    setModelQuery("");
     const cur = modelsMap[login];
     setModelAll(cur == null);
     setModelSel(cur ? [...cur] : []);
@@ -397,37 +399,64 @@ export default function AdminUsersPage() {
           Снимите галочку, чтобы разрешить только отмеченные модели. Пикер в чате пользователя
           покажет лишь их, переключение на остальные блокируется шлюзом.
         </p>
+        <input
+          type="search"
+          value={modelQuery}
+          onChange={(e) => setModelQuery(e.target.value)}
+          placeholder="Поиск модели… например glm-5.3"
+          className="mt-3 w-full rounded-xl border border-[rgba(143,184,174,0.15)] bg-[rgba(143,184,174,0.06)] px-3 py-2 text-sm text-[rgba(220,235,230,0.9)] outline-none placeholder:text-[rgba(165,187,179,0.4)] focus:border-[rgba(143,184,174,0.4)]"
+        />
         <div className={`mt-4 space-y-4 ${modelAll ? "pointer-events-none opacity-40" : ""}`}>
           {catalogLoading ? (
             <div className="space-y-2">{[0, 1, 2].map((i) => <div key={i} className="h-8 animate-pulse rounded-xl bg-[rgba(143,184,174,0.06)]" />)}</div>
           ) : catalog.length === 0 ? (
             <p className="py-3 text-center text-xs text-[rgba(165,187,179,0.5)]">Каталог моделей недоступен</p>
           ) : (
-            catalog.map((p) => (
-              <div key={p.name}>
-                <div className="mb-1.5 text-[10px] uppercase tracking-wider text-[rgba(165,187,179,0.5)]">{p.label || p.name}</div>
-                <div className="flex flex-wrap gap-1.5">
-                  {(p.models || []).map((m) => {
-                    const key = `${p.name}/${m}`;
-                    const checked = modelSel.includes(key);
-                    return (
-                      <button
-                        key={key}
-                        onClick={() => toggleModel(key)}
-                        className={`flex items-center gap-1 rounded-xl px-2.5 py-1 text-[11px] transition-all ${
-                          checked
-                            ? "bg-[rgba(143,184,174,0.25)] text-[rgba(220,235,230,0.95)]"
-                            : "bg-[rgba(143,184,174,0.06)] text-[rgba(165,187,179,0.7)] hover:bg-[rgba(143,184,174,0.14)]"
-                        }`}
-                      >
-                        {checked && <Check className="h-3 w-3 text-mint" />}
-                        {m}
-                      </button>
-                    );
-                  })}
+            (() => {
+              const q = modelQuery.trim().toLowerCase();
+              const rows = catalog
+                .map((p) => ({
+                  ...p,
+                  models: (p.models || []).filter(
+                    (m) => !q || m.toLowerCase().includes(q) || (p.label || p.name).toLowerCase().includes(q),
+                  ),
+                }))
+                .filter((p) => p.models.length > 0);
+              if (q && rows.length === 0) {
+                return (
+                  <p className="py-3 text-center text-xs text-[rgba(165,187,179,0.5)]">
+                    По запросу «{modelQuery}» ничего не найдено
+                  </p>
+                );
+              }
+              return rows.map((p) => (
+                <div key={p.name}>
+                  <div className="mb-1.5 text-[10px] uppercase tracking-wider text-[rgba(165,187,179,0.5)]">
+                    {p.label || p.name} · {p.models.length}
+                  </div>
+                  <div className="flex flex-wrap gap-1.5">
+                    {p.models.map((m) => {
+                      const key = `${p.name}/${m}`;
+                      const checked = modelSel.includes(key);
+                      return (
+                        <button
+                          key={key}
+                          onClick={() => toggleModel(key)}
+                          className={`flex items-center gap-1 rounded-xl px-2.5 py-1 text-[11px] transition-all ${
+                            checked
+                              ? "bg-[rgba(143,184,174,0.25)] text-[rgba(220,235,230,0.95)]"
+                              : "bg-[rgba(143,184,174,0.06)] text-[rgba(165,187,179,0.7)] hover:bg-[rgba(143,184,174,0.14)]"
+                          }`}
+                        >
+                          {checked && <Check className="h-3 w-3 text-mint" />}
+                          {m}
+                        </button>
+                      );
+                    })}
+                  </div>
                 </div>
-              </div>
-            ))
+              ));
+            })()
           )}
         </div>
       </AdminModal>

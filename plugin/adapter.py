@@ -573,7 +573,7 @@ class GTWAdapter(BasePlatformAdapter):
             current_base_url=cur["base_url"], current_model=cur["model"],
             user_providers=(cfg.get("providers") or {}),
             custom_providers=get_compatible_custom_providers(cfg),
-            max_models=100, include_moa=True,
+            max_models=None, include_moa=True,
             excluded_providers=(catalog_cfg.get("excluded_providers")
                                 if isinstance(catalog_cfg, dict) else None),
             probe_custom_providers=False, probe_current_custom_provider=False,
@@ -583,7 +583,7 @@ class GTWAdapter(BasePlatformAdapter):
             name = str(r.get("name") or r.get("slug") or "")
             if name:
                 providers.append({"name": name, "slug": str(r.get("slug") or ""),
-                                  "models": [str(x) for x in (r.get("models") or [])][:100]})
+                                  "models": [str(x) for x in (r.get("models") or [])]})
         return providers, cur
 
     async def _send_models(self, ws, frame: dict[str, Any]) -> None:
@@ -597,7 +597,7 @@ class GTWAdapter(BasePlatformAdapter):
             try:
                 st = self._stats(chat_id)
                 source = self._source_for(chat_id, st["user_id"] or "gtw", st["user_name"] or "GTW")
-                result = fn(source)
+                result = fn(source, max_models=None)
                 if asyncio.iscoroutine(result):
                     result = await asyncio.wait_for(result, timeout=15)
                 for p in result or []:
@@ -607,7 +607,7 @@ class GTWAdapter(BasePlatformAdapter):
                     if name:
                         # slug — для карты slug→display в GTW-прокси (гейт моделей):
                         # session_info/current несут slug, каталог и белый список — display.
-                        providers.append({"name": name, "slug": slug, "models": [str(m) for m in models][:100]})
+                        providers.append({"name": name, "slug": slug, "models": [str(m) for m in models]})
             except Exception as e:
                 logger.warning("GTW: model catalog unavailable: %s", e)
         # Запасной путь: прямой каталог из config — работает и без runner-контекста.
