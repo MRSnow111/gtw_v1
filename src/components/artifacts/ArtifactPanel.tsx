@@ -402,6 +402,7 @@ export function ArtifactPanel({ className }: { className?: string }) {
       <AnimatePresence>
         {lightbox && selected?.url && (
           <motion.div
+            key="lightbox"
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
@@ -434,11 +435,12 @@ export function ArtifactPanel({ className }: { className?: string }) {
       <AnimatePresence>
         {viewerOpen && selected && (
           <motion.div
+            key="fullscreen"
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
             transition={{ duration: 0.18 }}
-            className="fixed inset-0 z-[70] flex flex-col bg-fern-950/95 backdrop-blur-sm"
+            className="fixed inset-0 z-[70] flex flex-col bg-fern-950 backdrop-blur-sm"
           >
             <div className="flex items-center gap-2 border-b border-white/[0.06] px-5 py-3">
               <span className="min-w-0 flex-1 truncate text-sm text-foreground">{selected.name}</span>

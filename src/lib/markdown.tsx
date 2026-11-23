@@ -145,5 +145,9 @@ export function Markdown({ source }: { source: string }) {
     );
   }
 
-  return <div className="scroll-area h-full overflow-auto px-4 py-3">{blocks}</div>;
+  return (
+    <div className="scroll-area h-full overflow-auto px-4 py-3">
+      <div className="mx-auto max-w-3xl">{blocks}</div>
+    </div>
+  );
 }
