@@ -917,10 +917,22 @@ class GTWAdapter(BasePlatformAdapter):
         await self._broadcast(frame)
         return SendResult(success=True, message_id=_ms_id())
 
-    async def send_document(self, chat_id: str, path: str, caption: Optional[str] = None, **kw):
-        host = self._resolve_media_host_path(path, chat_id)
+    async def send_document(self, chat_id: str, file_path: str, caption: Optional[str] = None, **kw):
+        # Имя параметра file_path — канон ядра (base.py): dispatch зовёт send_document(file_path=…).
+        host = self._resolve_media_host_path(file_path, chat_id)
         frame = {"type": "artifact", "chat_id": chat_id, "kind": "document",
-                 "url": host or str(path), "caption": caption}
+                 "url": host or str(file_path), "caption": caption}
+        if host:
+            name, mime, size = self._media_meta(host)
+            frame.update(name=name, mime=mime, size=size)
+        await self._broadcast(frame)
+        return SendResult(success=True, message_id=_ms_id())
+
+    async def send_image_file(self, chat_id: str, image_path: str, caption: Optional[str] = None, **kw):
+        # Ядро шлёт локальные картинки через send_image_file(image_path=…), не send_image(image_url=…).
+        host = self._resolve_media_host_path(image_path, chat_id)
+        frame = {"type": "artifact", "chat_id": chat_id, "kind": "image",
+                 "url": host or str(image_path), "caption": caption}
         if host:
             name, mime, size = self._media_meta(host)
             frame.update(name=name, mime=mime, size=size)
