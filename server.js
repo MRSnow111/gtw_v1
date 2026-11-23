@@ -75,6 +75,15 @@ function getDb() {
       );
       CREATE INDEX IF NOT EXISTS idx_files_login ON files (login, created_at);
       CREATE INDEX IF NOT EXISTS idx_files_chat ON files (chat_id);
+      CREATE TABLE IF NOT EXISTS chats (
+        login      TEXT NOT NULL,
+        chat_id    TEXT NOT NULL,
+        title      TEXT NOT NULL DEFAULT 'Новый чат',
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        PRIMARY KEY (login, chat_id)
+      );
+      CREATE INDEX IF NOT EXISTS idx_chats_login ON chats (login, updated_at);
     `);
   }
   return db;
@@ -97,6 +106,21 @@ function chatOwnerLogin(chatId) {
   if (chatOwners.has(chatId)) return chatOwners.get(chatId);
   try {
     const r = getDb().prepare("SELECT login FROM usage_stats WHERE chat_id = ?").get(chatId);
+    return (r && r.login) || "";
+  } catch {
+    return "";
+  }
+}
+/** Владелец из авторитетного per-login реестра чатов (таблица chats).
+ *  В отличие от chatOwnerLogin (глобальный usage_stats) НЕ приписывает общий
+ *  дефолтный чат "main"/пробы конкретному пользователю: незарегистрированный
+ *  chat_id → "" (нет частного владельца). Используется гейтом session_info. */
+function chatRegistryOwner(chatId, login) {
+  try {
+    // чат зарегистрирован на текущего пользователя → чужого владельца нет
+    const mine = getDb().prepare("SELECT 1 FROM chats WHERE chat_id = ? AND login = ?").get(chatId, login);
+    if (mine) return "";
+    const r = getDb().prepare("SELECT login FROM chats WHERE chat_id = ?").get(chatId);
     return (r && r.login) || "";
   } catch {
     return "";
@@ -523,11 +547,15 @@ app.prepare().then(() => {
       }
       if (type === "session_info") {
         const chatId = String(frame.chat_id || "main");
-        const owner = chatOwnerLogin(chatId);
-        if (!isAdmin && owner && owner !== login) {
+        // Владелец — из per-login реестра chats (авторитетно), НЕ из глобального
+        // usage_stats: общий дефолт "main"/пробы не зарегистрированы и не должны
+        // приписываться одному пользователю (ложный forbidden у остальных).
+        const regOwner = chatRegistryOwner(chatId, login);
+        if (!isAdmin && regOwner && regOwner !== login) {
           sendToClient({ type: "error", error: "forbidden" });
           return null;
         }
+        const owner = chatOwnerLogin(chatId);
         if (owner) chatOwners.set(chatId, owner);
         return raw;
       }
