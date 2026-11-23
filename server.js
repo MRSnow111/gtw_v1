@@ -111,17 +111,24 @@ function chatOwnerLogin(chatId) {
     return "";
   }
 }
-/** Владелец из авторитетного per-login реестра чатов (таблица chats).
- *  В отличие от chatOwnerLogin (глобальный usage_stats) НЕ приписывает общий
- *  дефолтный чат "main"/пробы конкретному пользователю: незарегистрированный
- *  chat_id → "" (нет частного владельца). Используется гейтом session_info. */
-function chatRegistryOwner(chatId, login) {
+/** Логин, блокирующий доступ к session_info, либо "" если доступ разрешён.
+ *  Приоритет: per-login реестр chats (авторитетно) → для незарегистрированных
+ *  старых чатов fallback на usage_stats. Общий дефолт "main" НЕ гейтится:
+ *  он не зарегистрирован и не является частным чатом (иначе ложный forbidden
+ *  у всех, кроме того, на кого usage_stats случайно записал "main"). */
+function sessionInfoBlockOwner(chatId, login) {
   try {
-    // чат зарегистрирован на текущего пользователя → чужого владельца нет
+    // мой зарегистрированный чат → разрешён
     const mine = getDb().prepare("SELECT 1 FROM chats WHERE chat_id = ? AND login = ?").get(chatId, login);
     if (mine) return "";
-    const r = getDb().prepare("SELECT login FROM chats WHERE chat_id = ?").get(chatId);
-    return (r && r.login) || "";
+    // зарегистрирован на другого → чужой
+    const reg = getDb().prepare("SELECT login FROM chats WHERE chat_id = ?").get(chatId);
+    if (reg && reg.login) return reg.login;
+    // общий дефолт "main" без регистрации → не частный чат, разрешён
+    if (chatId === "main") return "";
+    // старый незарегистрированный чат → владелец из usage_stats
+    const u = getDb().prepare("SELECT login FROM usage_stats WHERE chat_id = ?").get(chatId);
+    return (u && u.login) || "";
   } catch {
     return "";
   }
@@ -547,11 +554,10 @@ app.prepare().then(() => {
       }
       if (type === "session_info") {
         const chatId = String(frame.chat_id || "main");
-        // Владелец — из per-login реестра chats (авторитетно), НЕ из глобального
-        // usage_stats: общий дефолт "main"/пробы не зарегистрированы и не должны
-        // приписываться одному пользователю (ложный forbidden у остальных).
-        const regOwner = chatRegistryOwner(chatId, login);
-        if (!isAdmin && regOwner && regOwner !== login) {
+        // Реестр chats авторитетен; старые незарегистрированные чаты — по
+        // usage_stats; общий дефолт "main" не гейтится (ложный forbidden).
+        const block = sessionInfoBlockOwner(chatId, login);
+        if (!isAdmin && block && block !== login) {
           sendToClient({ type: "error", error: "forbidden" });
           return null;
         }
