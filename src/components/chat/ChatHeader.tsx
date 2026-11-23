@@ -2,8 +2,7 @@
 
 import { useState } from "react";
 import { AnimatePresence } from "framer-motion";
-import { Copy, Info, Maximize2 } from "lucide-react";
-import { toast } from "sonner";
+import { Info, Maximize2 } from "lucide-react";
 import { useWsStore } from "@/stores/wsStore";
 import { useUiStore } from "@/stores/uiStore";
 import { useAgentStore, DEMO_MODE } from "@/stores/agentStore";
@@ -47,13 +46,6 @@ export function ChatHeader({ title }: { title?: string }) {
         onClick={() => setShowInfo((v) => !v)}
       >
         <Info className="h-4 w-4" />
-      </IconButton>
-      <IconButton
-        aria-label="Копировать переписку"
-        title="Копировать переписку"
-        onClick={() => toast.success("Переписка скопирована")}
-      >
-        <Copy className="h-4 w-4" />
       </IconButton>
       <IconButton
         aria-label="Развернуть"

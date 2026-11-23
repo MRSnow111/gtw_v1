@@ -7,7 +7,7 @@ import { formatDistanceToNowStrict } from "date-fns";
 import { ru } from "date-fns/locale";
 import {
   BarChart3, LogOut, MessageSquare, MoreHorizontal, Pencil,
-  Plus, Search, Settings, Shield, SquareTerminal, Sun, Trash2, X,
+  Plus, Search, Settings, Shield, SquareTerminal, Trash2, X,
 } from "lucide-react";
 import Link from "next/link";
 import { toast } from "sonner";
@@ -116,13 +116,6 @@ export function Sidebar({ className, onNavigate }: SidebarProps) {
           <div className="text-[15px] font-medium tracking-wide text-mint-soft">GTW</div>
           <div className="text-[11px] text-[rgba(220,235,230,0.6)]">шлюз к агенту Hermes</div>
         </div>
-        <IconButton
-          disabled
-          title="Светлая тема в разработке"
-          aria-label="Переключить тему (недоступно)"
-        >
-          <Sun className="h-4 w-4" />
-        </IconButton>
         {onNavigate && (
           <IconButton className="md:hidden" onClick={onNavigate} aria-label="Закрыть меню">
             <X className="h-4 w-4" />

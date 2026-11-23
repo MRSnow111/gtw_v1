@@ -4,7 +4,7 @@ import { useState } from "react";
 import { motion } from "framer-motion";
 import {
   Ban, Brain, Check, CheckCheck, ChevronDown, ChevronRight, Clock3, Copy,
-  FileCode2, FileSearch, FileText, Globe, HelpCircle, Loader2, Pencil,
+  FileCode2, FileSearch, FileText, Globe, HelpCircle, Loader2,
   ShieldAlert, Terminal, X,
 } from "lucide-react";
 import { toast } from "sonner";
@@ -78,12 +78,6 @@ export function UserTurn({ turn }: { turn: Turn }) {
           className="flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[11px] text-[rgba(220,235,230,0.6)] hover:bg-white/[0.06] hover:text-foreground"
         >
           <Copy className="h-3 w-3" /> Копировать
-        </button>
-        <button
-          onClick={() => toast.info("Редактирование сообщений появится позже")}
-          className="flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[11px] text-[rgba(220,235,230,0.6)] hover:bg-white/[0.06] hover:text-foreground"
-        >
-          <Pencil className="h-3 w-3" /> Изменить
         </button>
       </div>
     </motion.div>

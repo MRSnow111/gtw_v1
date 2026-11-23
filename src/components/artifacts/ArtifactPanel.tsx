@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import {
   ArrowLeft, Check, Copy, Download, FileCode2, FileText, Inbox,
-  Image as ImageIcon, Maximize2, TriangleAlert, X,
+  Image as ImageIcon, TriangleAlert, X,
 } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
@@ -139,12 +139,6 @@ export function ArtifactPanel({ className }: { className?: string }) {
           <span className="flex-1 pl-1 text-sm text-mint-soft">Артефакты</span>
         )}
         {!selected && <GlassBadge>{list.length}</GlassBadge>}
-        <IconButton
-          onClick={() => toast.info("Отдельное окно появится вместе с бэкендом")}
-          aria-label="Открыть отдельно"
-        >
-          <Maximize2 className="h-3.5 w-3.5" />
-        </IconButton>
       </div>
 
       {selected ? (
@@ -182,7 +176,7 @@ export function ArtifactPanel({ className }: { className?: string }) {
               <div className="text-[11px] text-[rgba(220,235,230,0.6)]">
                 {selected.size} · {new Date(selected.updatedAt).toLocaleTimeString("ru", { hour: "2-digit", minute: "2-digit" })}
               </div>
-              {selected.url ? (
+              {selected.url && (
                 <a
                   href={`${selected.url}${selected.url.includes("?") ? "&" : "?"}download=1`}
                   download={selected.name}
@@ -190,13 +184,6 @@ export function ArtifactPanel({ className }: { className?: string }) {
                 >
                   <Download className="h-3.5 w-3.5" /> Скачать
                 </a>
-              ) : (
-                <button
-                  onClick={() => toast.info("Скачивание появится вместе с бэкендом")}
-                  className="glass-medium mt-2 flex items-center gap-2 rounded-xl px-4 py-1.5 text-xs text-foreground transition-colors hover:border-mint/40"
-                >
-                  <Download className="h-3.5 w-3.5" /> Скачать
-                </button>
               )}
             </div>
           )}

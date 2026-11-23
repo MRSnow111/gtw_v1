@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import { useRouter } from "next/navigation";
 import {
-  ArrowUp, FileText, Paperclip, RotateCcw, Square, Upload, X,
+  ArrowUp, FileText, Paperclip, Square, X,
 } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
@@ -253,6 +253,7 @@ export function Composer({ chatId }: ComposerProps) {
               exit={{ opacity: 0, y: 8, scale: 0.98 }}
               transition={{ duration: 0.18 }}
               className="glass-strong absolute bottom-full left-0 right-0 z-20 mx-auto mb-2 w-80 rounded-2xl p-1.5"
+              style={{ background: "linear-gradient(135deg, rgba(23,46,42,0.985), rgba(13,28,25,0.99))" }}
             >
               {filteredCommands.map((c, i) => (
                 <button
@@ -335,15 +336,6 @@ export function Composer({ chatId }: ComposerProps) {
                       style={{ width: `${a.progress || 0}%` }}
                     />
                   )}
-                  {a.status === "failed" && (
-                    <button
-                      onClick={() => toast.info("Повтор загрузки появится вместе с бэкендом")}
-                      className="text-red-300 hover:text-red-200"
-                      aria-label="Повторить"
-                    >
-                      <RotateCcw className="h-3 w-3" />
-                    </button>
-                  )}
                 </div>
               ))}
             </div>
@@ -367,13 +359,6 @@ export function Composer({ chatId }: ComposerProps) {
                 aria-label="Прикрепить файл"
               >
                 <Paperclip className="h-4 w-4" />
-              </button>
-              <button
-                onClick={addFile}
-                className="flex h-8 w-8 items-center justify-center rounded-full text-[rgba(220,235,230,0.7)] transition-colors hover:bg-white/[0.06] hover:text-foreground"
-                aria-label="Загрузить файл"
-              >
-                <Upload className="h-4 w-4" />
               </button>
             </div>
             <motion.button

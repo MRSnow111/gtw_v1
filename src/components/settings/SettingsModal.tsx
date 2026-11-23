@@ -111,25 +111,6 @@ export function SettingsModal() {
               </button>
             </section>
 
-            {/* интерфейс */}
-            <section className="glass-light mb-5 rounded-2xl p-4">
-              <div className="mb-3 text-[13px] text-dim">Интерфейс</div>
-              <div className="flex items-center justify-between gap-3">
-                <div>
-                  <div className="text-[13px] text-foreground">Тёмная тема</div>
-                  <div className="text-[11px] text-[rgba(220,235,230,0.6)]">
-                    Светлая тема в разработке
-                  </div>
-                </div>
-                <div
-                  className="relative h-6 w-11 shrink-0 cursor-not-allowed rounded-full bg-mint/30 opacity-50"
-                  title="Светлая тема в разработке"
-                >
-                  <span className="absolute left-0.5 top-0.5 h-5 w-5 rounded-full bg-mint shadow" />
-                </div>
-              </div>
-            </section>
-
             <button
               onClick={() => {
                 close();
