@@ -15,7 +15,9 @@ import {
   fileUrl,
   sanitizeName,
   guessMime,
+  listFilesForProject,
 } from "@/lib/fileStore";
+import { getProject } from "@/lib/projectStore";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -43,6 +45,8 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ code: "empty_file" }, { status: 400 });
   }
   const chatId = String(form.get("chat_id") || "").slice(0, 120);
+  const projectIdRaw = String(form.get("project_id") || "").slice(0, 64);
+  const projectId = projectIdRaw && getProject(session.login, projectIdRaw) ? projectIdRaw : null;
   const id = newFileId();
   const name = sanitizeName(f.name || "file");
   let storagePath: string;
@@ -58,6 +62,7 @@ export async function POST(request: NextRequest) {
     id,
     login: session.login,
     chat_id: chatId,
+    project_id: projectId,
     direction: "in",
     name,
     mime: f.type || guessMime(name),
@@ -72,4 +77,28 @@ export async function POST(request: NextRequest) {
     size: row.size,
     url: fileUrl(row.id),
   });
+}
+
+/** GET /api/files?project_id=… — файлы проекта (загрузки + артефакты), только владелец. */
+export async function GET(request: NextRequest) {
+  const session = await getSession(request);
+  if (!session) {
+    return NextResponse.json({ code: "unauthorized" }, { status: 401 });
+  }
+  const projectId = new URL(request.url).searchParams.get("project_id") || "";
+  if (!projectId) return NextResponse.json({ files: [] });
+  if (!getProject(session.login, projectId)) {
+    return NextResponse.json({ code: "not_found" }, { status: 404 });
+  }
+  const files = listFilesForProject(session.login, projectId).map((f) => ({
+    id: f.id,
+    name: f.name,
+    mime: f.mime,
+    size: f.size,
+    direction: f.direction,
+    chat_id: f.chat_id,
+    created_at: f.created_at,
+    url: fileUrl(f.id),
+  }));
+  return NextResponse.json({ files });
 }

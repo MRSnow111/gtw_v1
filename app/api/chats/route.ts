@@ -20,7 +20,7 @@ export async function GET(request: NextRequest) {
 export async function PUT(request: NextRequest) {
   const session = await getSession(request);
   if (!session) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
-  let body: { chat_id?: unknown; title?: unknown };
+  let body: { chat_id?: unknown; title?: unknown; project_id?: unknown };
   try {
     body = await request.json();
   } catch {
@@ -29,6 +29,9 @@ export async function PUT(request: NextRequest) {
   const chatId = String(body?.chat_id ?? "").slice(0, 120);
   const title = String(body?.title ?? "Новый чат").slice(0, 200) || "Новый чат";
   if (!chatId) return NextResponse.json({ error: "chat_id_required" }, { status: 400 });
-  upsertChat(session.login, chatId, title);
+  // project_id: нет в теле → сохранить привязку; null/строка → задать.
+  const hasProject = Object.prototype.hasOwnProperty.call(body ?? {}, "project_id");
+  const projectId = hasProject ? (body.project_id ? String(body.project_id).slice(0, 64) : null) : undefined;
+  upsertChat(session.login, chatId, title, projectId);
   return NextResponse.json({ ok: true });
 }

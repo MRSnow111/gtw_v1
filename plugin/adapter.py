@@ -693,6 +693,56 @@ class GTWAdapter(BasePlatformAdapter):
             logger.warning("GTW: provider slug lookup failed: %s", e)
         return ""
 
+    def _project_context(self, frame: dict[str, Any], user_id: str, role: str) -> str:
+        """Контекст проекта (фаза 3): рабочий каталог /root/projects/<slug> + файлы проекта.
+
+        Создаёт каталог в home профиля (host) и копирует туда файлы проекта (best-effort):
+        home_mode=auto -> контейнер видит HERMES_HOME/home как /root, поэтому host-каталог
+        <profile>/home/projects/<slug> отображается в песочницу как /root/projects/<slug>.
+        Возвращает префикс для текста агента; история ходов не засоряется (_remember уже вызван
+        с исходным text). Блокирующий файловый IO — вызывать через asyncio.to_thread.
+        """
+        proj = frame.get("project")
+        if not isinstance(proj, dict):
+            return ""
+        slug = re.sub(r"[^\w.\-]", "_", str(proj.get("slug") or ""))[:80].strip(".-")
+        name = str(proj.get("name") or "проект")
+        if not slug:
+            return ""
+        sandbox_dir = f"/root/projects/{slug}"
+        try:
+            from hermes_constants import get_hermes_home
+            if role == "admin" or user_id in self._admin_logins:
+                home = Path(get_hermes_home()) / "home"
+            else:
+                home = self._profiles_dir() / self._user_profile_name(user_id) / "home"
+            host_dir = home / "projects" / slug
+            host_dir.mkdir(parents=True, exist_ok=True)
+            for pf in (frame.get("project_files") or [])[:50]:
+                if not isinstance(pf, dict):
+                    continue
+                src = str(pf.get("storage_path") or "")
+                fname = re.sub(r"[^\w.\-]", "_", str(pf.get("name") or "file"))[:120] or "file"
+                if src and os.path.isfile(src):
+                    try:
+                        shutil.copyfile(src, str(host_dir / fname))
+                    except Exception:
+                        pass
+        except Exception:
+            logger.debug("GTW: project dir provision failed", exc_info=True)
+        files = frame.get("project_files") or []
+        names = [str(f.get("name")) for f in files if isinstance(f, dict) and f.get("name")]
+        files_line = ", ".join(names[:30]) if names else "пока нет"
+        return (
+            f"[Контекст проекта]\n"
+            f"Этот чат относится к проекту «{name}».\n"
+            f"Рабочий каталог проекта: {sandbox_dir}/ — создай его при необходимости "
+            f"(mkdir -p {sandbox_dir}) и выполняй всю работу проекта в нём (cd {sandbox_dir}).\n"
+            f"Файлы проекта сейчас: {files_line}.\n"
+            f"Новые файлы проекта сохраняй в {sandbox_dir}/.\n"
+            f"---\n"
+        )
+
     async def _inbound_message(self, frame: dict[str, Any]) -> None:
         text = str(frame.get("text") or "").strip()
         chat_id = str(frame.get("chat_id") or "main")
@@ -759,8 +809,14 @@ class GTWAdapter(BasePlatformAdapter):
                 logger.warning("GTW: ensure user routed for %s: %s", user_id, e)
         source = self.build_source(chat_id=chat_id, chat_name=chat_id, chat_type="dm",
                                    user_id=user_id, user_name=user_name)
+        # Контекст проекта (фаза 3) — префикс к тексту агента, не к истории (_remember выше).
+        try:
+            proj_ctx = await asyncio.to_thread(self._project_context, frame, user_id, role)
+        except Exception:
+            proj_ctx = ""
+        agent_text = proj_ctx + text
         await self.handle_message(MessageEvent(
-            text=text, message_type=MessageType.TEXT, source=source,
+            text=agent_text, message_type=MessageType.TEXT, source=source,
             user_id=user_id, user_name=user_name,
             message_id=message_id, timestamp=datetime.datetime.now(),
             media_urls=media_urls, media_types=media_types, media_filenames=media_filenames))

@@ -101,7 +101,7 @@ function syncChat(chat: DemoChat) {
     fetch("/api/chats", {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ chat_id: chat.id, title: chat.title }),
+      body: JSON.stringify({ chat_id: chat.id, title: chat.title, project_id: chat.projectId ?? null }),
     }).catch(() => {});
   } catch {}
 }
@@ -412,10 +412,11 @@ export const useLiveStore = create<DemoState>()((set, get) => ({
           const data = await res.json();
           const login = userId();
           const items: DemoChat[] = (data.chats || []).map(
-            (c: { id: string; title: string; createdAt: string; updatedAt: string }) => ({
+            (c: { id: string; title: string; projectId?: string | null; createdAt: string; updatedAt: string }) => ({
               id: c.id,
               title: c.title,
               userId: login,
+              projectId: c.projectId ?? null,
               createdAt: c.createdAt,
               updatedAt: c.updatedAt,
               kind: "chat" as const,
@@ -521,10 +522,11 @@ export const useLiveStore = create<DemoState>()((set, get) => ({
         }));
       },
 
-      createChat: () => {
+      createChat: (projectId) => {
         const chat: DemoChat = {
           id: uid("c"), title: "Новый чат", userId: userId(),
           createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), kind: "chat",
+          projectId: projectId ?? null,
         };
         set((s) => ({ chats: [chat, ...s.chats] }));
         syncChat(chat);

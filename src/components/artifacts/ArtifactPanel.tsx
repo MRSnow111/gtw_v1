@@ -1,15 +1,18 @@
 "use client";
 
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import {
-  ArrowLeft, Check, Copy, Download, FileCode2, FileText, Inbox,
-  Image as ImageIcon, TriangleAlert, X, Maximize2, Presentation, Loader2,
+  ArrowLeft, Check, Copy, Download, FileCode2, FileText, Folder, Inbox,
+  Image as ImageIcon, TriangleAlert, X, Maximize2, Presentation, Loader2, Upload,
 } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { useAgentStore } from "@/stores/agentStore";
+import { useProjectStore } from "@/stores/projectStore";
 import type { Artifact } from "@/lib/demoData";
+import { formatSize } from "@/lib/demoData";
+import { detectKind } from "@/lib/fileKind";
 import { GlassBadge, IconButton } from "@/components/ui/glass";
 import { Markdown } from "@/lib/markdown";
 
@@ -288,16 +291,86 @@ function FileBody({
 /* ─────────── панель ─────────── */
 
 export function ArtifactPanel({ className }: { className?: string }) {
-  const { artifacts, activeChatId, retryArtifact, sendMessage } = useAgentStore();
+  const { artifacts, activeChatId, retryArtifact, sendMessage, chats } = useAgentStore();
+  const projects = useProjectStore((s) => s.projects);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [lightbox, setLightbox] = useState(false);
   const [viewerOpen, setViewerOpen] = useState(false);
+  const [tab, setTab] = useState<"artifacts" | "project">("artifacts");
+  const [projectFiles, setProjectFiles] = useState<Artifact[]>([]);
+  const [loadingFiles, setLoadingFiles] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const list = useMemo(
+  const activeProjectId = chats.find((c) => c.id === activeChatId)?.projectId ?? null;
+  const activeProject = projects.find((p) => p.id === activeProjectId) ?? null;
+
+  const chatArtifacts = useMemo(
     () => artifacts.filter((a) => a.chatId === activeChatId),
     [artifacts, activeChatId]
   );
-  const selected = list.find((a) => a.id === selectedId) || null;
+
+  const loadProjectFiles = useCallback(async (pid: string) => {
+    setLoadingFiles(true);
+    try {
+      const res = await fetch(`/api/files?project_id=${encodeURIComponent(pid)}`);
+      if (res.ok) {
+        const data = await res.json();
+        const items: Artifact[] = (data.files || []).map(
+          (f: { id: string; name: string; mime: string; size: number; created_at: string }) => {
+            const { kind, lang } = detectKind(f.name, f.mime);
+            return {
+              id: f.id, chatId: activeChatId || "", name: f.name, kind, lang,
+              size: f.size ? formatSize(f.size) : "", sizeBytes: f.size,
+              updatedAt: f.created_at, url: `/api/files/${f.id}`, mime: f.mime, fileId: f.id,
+            };
+          }
+        );
+        setProjectFiles(items);
+      }
+    } catch {
+      /* ignore */
+    } finally {
+      setLoadingFiles(false);
+    }
+  }, [activeChatId]);
+
+  useEffect(() => {
+    if (tab === "project" && activeProjectId) loadProjectFiles(activeProjectId);
+  }, [tab, activeProjectId, loadProjectFiles]);
+
+  // смена чата — сброс вкладки и выбора
+  useEffect(() => {
+    setTab("artifacts");
+    setSelectedId(null);
+  }, [activeChatId]);
+
+  const list = tab === "project" ? projectFiles : chatArtifacts;
+  const selected =
+    list.find((a) => a.id === selectedId) || chatArtifacts.find((a) => a.id === selectedId) || null;
+
+  const switchTab = (t: "artifacts" | "project") => {
+    setTab(t);
+    setSelectedId(null);
+  };
+
+  const uploadProjectFile = async (file: File) => {
+    if (!activeProjectId) return;
+    const form = new FormData();
+    form.append("file", file);
+    form.append("chat_id", activeChatId || "");
+    form.append("project_id", activeProjectId);
+    try {
+      const res = await fetch("/api/files", { method: "POST", body: form });
+      if (res.ok) {
+        toast.success("Файл загружен в проект");
+        loadProjectFiles(activeProjectId);
+      } else {
+        toast.error("Не удалось загрузить файл");
+      }
+    } catch {
+      toast.error("Не удалось загрузить файл");
+    }
+  };
 
   useEffect(() => {
     if (!lightbox && !viewerOpen) return;
@@ -343,6 +416,48 @@ export function ArtifactPanel({ className }: { className?: string }) {
               <Maximize2 className="h-4 w-4" />
             </IconButton>
           </>
+        ) : activeProject ? (
+          <div className="flex flex-1 items-center gap-1">
+            <button
+              onClick={() => switchTab("artifacts")}
+              className={cn(
+                "rounded-full px-3 py-1 text-[12px] transition-colors",
+                tab === "artifacts" ? "bg-mint/18 text-foreground" : "text-dim hover:text-foreground"
+              )}
+            >
+              Артефакты <span className="tabular-nums opacity-70">{chatArtifacts.length}</span>
+            </button>
+            <button
+              onClick={() => switchTab("project")}
+              className={cn(
+                "flex items-center gap-1 rounded-full px-3 py-1 text-[12px] transition-colors",
+                tab === "project" ? "bg-mint/18 text-foreground" : "text-dim hover:text-foreground"
+              )}
+              title={`Файлы проекта «${activeProject.name}»`}
+            >
+              <Folder className="h-3 w-3 shrink-0" />
+              <span className="max-w-[90px] truncate">{activeProject.name}</span>
+              <span className="tabular-nums opacity-70">{projectFiles.length}</span>
+            </button>
+            {loadingFiles && <Loader2 className="h-3.5 w-3.5 animate-spin text-mint" />}
+            <IconButton
+              onClick={() => fileInputRef.current?.click()}
+              aria-label="Загрузить файл в проект"
+              title="Загрузить файл в проект"
+            >
+              <Upload className="h-4 w-4" />
+            </IconButton>
+            <input
+              ref={fileInputRef}
+              type="file"
+              className="hidden"
+              onChange={(e) => {
+                const f = e.target.files?.[0];
+                if (f) uploadProjectFile(f);
+                e.target.value = "";
+              }}
+            />
+          </div>
         ) : (
           <>
             <span className="flex-1 pl-1 text-sm text-mint-soft">Артефакты</span>
@@ -364,7 +479,9 @@ export function ArtifactPanel({ className }: { className?: string }) {
         <div className="flex flex-1 flex-col items-center justify-center gap-3 px-6 text-center">
           <Inbox className="h-7 w-7 text-[rgba(220,235,230,0.52)]" />
           <p className="text-xs leading-relaxed text-[rgba(220,235,230,0.6)]">
-            Здесь будут результаты работы агента
+            {tab === "project"
+              ? "Загрузите файлы проекта кнопкой выше или дождитесь результатов агента"
+              : "Здесь будут результаты работы агента"}
           </p>
         </div>
       ) : (

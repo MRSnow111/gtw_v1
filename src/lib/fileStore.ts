@@ -75,6 +75,7 @@ export interface FileRow {
   id: string;
   login: string;
   chat_id: string;
+  project_id: string | null;
   direction: "in" | "out";
   name: string;
   mime: string;
@@ -87,6 +88,7 @@ export interface RegisterInput {
   id: string;
   login: string;
   chat_id?: string;
+  project_id?: string | null;
   direction: "in" | "out";
   name: string;
   mime?: string;
@@ -114,6 +116,7 @@ export function registerFile(input: RegisterInput): FileRow {
     id: input.id,
     login: input.login,
     chat_id: input.chat_id || "",
+    project_id: input.project_id ?? null,
     direction: input.direction,
     name: sanitizeName(input.name),
     mime: input.mime || guessMime(input.name),
@@ -123,12 +126,22 @@ export function registerFile(input: RegisterInput): FileRow {
   };
   getDb()
     .prepare(
-      `INSERT INTO files (id, login, chat_id, direction, name, mime, size, storage_path, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `INSERT INTO files (id, login, chat_id, project_id, direction, name, mime, size, storage_path, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(id) DO NOTHING`
     )
-    .run(row.id, row.login, row.chat_id, row.direction, row.name, row.mime, row.size, row.storage_path, row.created_at);
+    .run(row.id, row.login, row.chat_id, row.project_id, row.direction, row.name, row.mime, row.size, row.storage_path, row.created_at);
   return row;
+}
+
+/** Файлы проекта (загрузки + артефакты), новые сверху. Только владелец. */
+export function listFilesForProject(login: string, projectId: string): FileRow[] {
+  const rows = getDb()
+    .prepare(
+      "SELECT * FROM files WHERE login = ? AND project_id = ? ORDER BY created_at DESC"
+    )
+    .all(login, projectId) as FileRow[];
+  return rows;
 }
 
 export function getFile(id: string): FileRow | null {

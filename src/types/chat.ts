@@ -5,6 +5,7 @@ export interface Chat {
   createdAt: string;
   updatedAt: string;
   model?: string;
+  projectId?: string | null;
   status?: "active" | "archived" | "deleted";
 }
 

@@ -66,6 +66,7 @@ function getDb() {
         id           TEXT PRIMARY KEY,
         login        TEXT NOT NULL,
         chat_id      TEXT NOT NULL DEFAULT '',
+        project_id   TEXT,
         direction    TEXT NOT NULL CHECK (direction IN ('in', 'out')),
         name         TEXT NOT NULL,
         mime         TEXT NOT NULL DEFAULT 'application/octet-stream',
@@ -79,12 +80,31 @@ function getDb() {
         login      TEXT NOT NULL,
         chat_id    TEXT NOT NULL,
         title      TEXT NOT NULL DEFAULT 'Новый чат',
+        project_id TEXT,
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL,
         PRIMARY KEY (login, chat_id)
       );
       CREATE INDEX IF NOT EXISTS idx_chats_login ON chats (login, updated_at);
+      CREATE TABLE IF NOT EXISTS projects (
+        id         TEXT PRIMARY KEY,
+        login      TEXT NOT NULL,
+        name       TEXT NOT NULL,
+        slug       TEXT NOT NULL,
+        archived   INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_projects_slug ON projects (login, slug);
+      CREATE INDEX IF NOT EXISTS idx_projects_login ON projects (login, updated_at);
     `);
+    // Миграция существующих БД: колонки project_id могли отсутствовать.
+    for (const tbl of ["chats", "files"]) {
+      const cols = db.prepare(`PRAGMA table_info(${tbl})`).all();
+      if (!cols.some((c) => c.name === "project_id")) {
+        db.exec(`ALTER TABLE ${tbl} ADD COLUMN project_id TEXT`);
+      }
+    }
   }
   return db;
 }
@@ -187,6 +207,21 @@ function artifactSourceAllowed(p) {
   const roots = [HERMES_HOME, FILESTORE_ROOT, ...ARTIFACT_EXTRA_ROOTS].map((r) => path.resolve(r));
   return roots.some((r) => abs === r || abs.startsWith(r + path.sep));
 }
+/** Проект чата ({id,name,slug}) или null — для контекста агента и привязки артефактов. */
+function chatProject(login, chatId) {
+  try {
+    const row = getDb()
+      .prepare(
+        `SELECT p.id, p.name, p.slug FROM chats c
+         JOIN projects p ON p.id = c.project_id AND p.login = c.login
+         WHERE c.login = ? AND c.chat_id = ?`
+      )
+      .get(login, chatId);
+    return row || null;
+  } catch {
+    return null;
+  }
+}
 /** Скопировать артефакт агента в стор + реестр (direction=out), вернуть метаданные. */
 function registerArtifact(login, chatId, srcPath, name, mime) {
   const id = randomUUID();
@@ -197,12 +232,13 @@ function registerArtifact(login, chatId, srcPath, name, mime) {
   fs.copyFileSync(srcPath, dest);
   const size = fs.statSync(dest).size;
   const finalMime = mime || "application/octet-stream";
+  const proj = chatProject(login, chatId);
   getDb()
     .prepare(
-      `INSERT INTO files (id, login, chat_id, direction, name, mime, size, storage_path, created_at)
-       VALUES (?, ?, ?, 'out', ?, ?, ?, ?, ?) ON CONFLICT(id) DO NOTHING`
+      `INSERT INTO files (id, login, chat_id, project_id, direction, name, mime, size, storage_path, created_at)
+       VALUES (?, ?, ?, ?, 'out', ?, ?, ?, ?, ?) ON CONFLICT(id) DO NOTHING`
     )
-    .run(id, login, chatId, safe, finalMime, size, dest, new Date().toISOString());
+    .run(id, login, chatId, proj ? proj.id : null, safe, finalMime, size, dest, new Date().toISOString());
   return { id, url: `/api/files/${id}`, name: safe, mime: finalMime, size };
 }
 /** Резолв вложений пользователя: только свои файлы (direction=in), с путём в сторе. */
@@ -519,6 +555,26 @@ app.prepare().then(() => {
         frame.user_id = login;
         frame.user_name = login;
         frame.role = isAdmin ? "admin" : "user"; // админ не изолируется по профилю
+        // контекст проекта: если чат привязан к проекту — передаём адаптеру slug/name,
+        // чтобы агент работал в каталоге /root/projects/<slug> (фаза 3).
+        const proj = chatProject(login, chatId);
+        if (proj) {
+          frame.project = { id: proj.id, name: proj.name, slug: proj.slug };
+          // файлы проекта (имя + host-путь) — адаптер кладёт их в каталог проекта песочницы
+          try {
+            const rows = getDb()
+              .prepare(
+                `SELECT name, storage_path FROM files WHERE login = ? AND project_id = ? ORDER BY created_at DESC LIMIT 50`
+              )
+              .all(login, proj.id);
+            frame.project_files = rows.map((r) => ({ name: r.name, storage_path: r.storage_path }));
+          } catch {
+            frame.project_files = [];
+          }
+        } else {
+          delete frame.project;
+          delete frame.project_files;
+        }
         // вложения: только свои файлы (direction=in), адаптеру отдаём storage_path
         if (Array.isArray(frame.attachments) && frame.attachments.length) {
           frame.attachments = resolveAttachments(login, isAdmin, frame.attachments);

@@ -62,7 +62,7 @@ export interface DemoState {
   stop: (chatId: string) => void;
   decide: (chatId: string, turnId: string, approvalId: string, choice: string, comment?: string) => void;
   answerClarify: (chatId: string, turnId: string, clarifyId: string, response: string) => void;
-  createChat: () => DemoChat;
+  createChat: (projectId?: string | null) => DemoChat;
   renameChat: (id: string, title: string) => void;
   deleteChat: (id: string) => void;
   retryArtifact: (id: string) => void;
@@ -156,10 +156,11 @@ export const useDemoStore = create<DemoState>((set, get) => ({
     }));
   },
 
-  createChat: () => {
+  createChat: (projectId) => {
     const chat: DemoChat = {
       id: `c${Date.now()}`, title: "Новый чат", userId: "u1",
       createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), kind: "chat",
+      projectId: projectId ?? null,
     };
     set((s) => ({ chats: [chat, ...s.chats] }));
     return chat;
