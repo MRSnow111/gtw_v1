@@ -325,6 +325,7 @@ app.prepare().then(() => {
         // login из подписанной куки, не из клиента (защита от спуфинга)
         frame.user_id = login;
         frame.user_name = login;
+        frame.role = isAdmin ? "admin" : "user"; // админ не изолируется по профилю
         return JSON.stringify(frame);
       }
       if (type === "sessions") {

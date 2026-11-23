@@ -94,6 +94,7 @@ class GTWAdapter(BasePlatformAdapter):
         # ── изоляция пользователей по профилям Hermes (multiplex) ──
         self._served_cache: set = set()          # имена профилей, уже обслуживаемых шлюзом
         self._routed_cache: set = set()          # имена профилей с уже инжектированным маршрутом
+        self._admin_logins: set = set()          # логины с ролью admin — не изолируются (default)
         self._prov_locks: dict = {}              # name -> threading.Lock (провизион)
         self._prov_guard = threading.Lock()
         self._persist_lock = threading.Lock()
@@ -221,9 +222,30 @@ class GTWAdapter(BasePlatformAdapter):
                    "gateway.profile_routes", json.dumps(data)]
             subprocess.run(cmd, capture_output=True, text=True, timeout=60)
 
+    def _remove_route(self, login: str) -> None:
+        """Снять маршрут platform=gtw user_id=login (если есть) из живого конфига + yaml.
+        Используется для admin: админ работает в default-профиле, маршрут ему не нужен."""
+        runner = getattr(self, "gateway_runner", None)
+        cfg = getattr(runner, "config", None)
+        if cfg is None:
+            return
+        routes = list(getattr(cfg, "profile_routes", []) or [])
+        kept = [r for r in routes if not (r.platform == "gtw" and r.user_id == login)]
+        if len(kept) != len(routes):
+            cfg.profile_routes = kept
+            try:
+                self._persist_routes()
+            except Exception as e:
+                logger.warning("GTW: persist routes failed: %s", e)
+
     def _ensure_user_routed(self, login: str) -> bool:
         """Полный цикл изоляции пользователя: профиль создан + обслуживается + маршрут
-        инжектирован. Блокирующий (вызывать через asyncio.to_thread). Идемпотентно."""
+        инжектирован. Блокирующий (вызывать через asyncio.to_thread). Идемпотентно.
+        Admin не изолируется: работает в default, маршрут (если был) снимается."""
+        if login in self._admin_logins:
+            self._remove_route(login)
+            self._routed_cache.discard(self._user_profile_name(login))
+            return True
         name = self._user_profile_name(login)
         if name in self._routed_cache:
             return True
@@ -253,7 +275,8 @@ class GTWAdapter(BasePlatformAdapter):
         login = kwargs.get("user_id")
         if login is None and len(args) >= 4:
             login = args[3]  # chat_id, chat_name, chat_type, user_id
-        if login and str(login) != "gtw" and self._multiplex_on():
+        if login and str(login) != "gtw" and str(login) not in self._admin_logins \
+                and self._multiplex_on():
             name = self._user_profile_name(str(login))
             if name not in self._routed_cache:
                 self._kick_provision(name, str(login))
@@ -619,9 +642,16 @@ class GTWAdapter(BasePlatformAdapter):
             return
         user_id = str(frame.get("user_id") or "gtw")
         user_name = str(frame.get("user_name") or user_id)
+        role = str(frame.get("role") or "user")  # роль из подписанной куки (server.js)
         st = self._stats(chat_id)
         st["user_id"] = user_id
         st["user_name"] = user_name
+        st["role"] = role
+        if user_id != "gtw":
+            if role == "admin":
+                self._admin_logins.add(user_id)
+            else:
+                self._admin_logins.discard(user_id)
         st["turns"] += 1
         self._touch(chat_id)
         self._remember(chat_id, "user", text, message_id)
