@@ -4,6 +4,7 @@ import { create } from "zustand";
 import { toast } from "sonner";
 import type { Artifact, DemoChat, ToolCall, Turn } from "@/lib/demoData";
 import { seedCommands, formatSize } from "@/lib/demoData";
+import { detectKind } from "@/lib/fileKind";
 import type { DemoState } from "@/stores/demoStore";
 import { gtwSocket } from "@/lib/gtwSocket";
 import type { ApprovalChoice, GtwServerFrame } from "@/types/events";
@@ -255,14 +256,16 @@ function onFrame(frame: GtwServerFrame) {
 
     case "artifact": {
       const mime = frame.mime || "";
-      const isImage = frame.kind === "image" || mime.startsWith("image/");
       const name = frame.name || frame.caption || frame.url.split("/").pop() || "артефакт";
       const sizeBytes = typeof frame.size === "number" ? frame.size : 0;
+      const det = detectKind(name, mime);
+      const kind = frame.kind === "image" ? "image" : det.kind;
       const art: Artifact = {
         id: uid("ar"),
         chatId: frame.chat_id,
         name,
-        kind: isImage ? "image" : "other",
+        kind,
+        lang: det.lang || undefined,
         size: sizeBytes ? formatSize(sizeBytes) : "",
         updatedAt: new Date().toISOString(),
         url: frame.url,

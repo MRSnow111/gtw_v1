@@ -1,16 +1,17 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import {
   ArrowLeft, Check, Copy, Download, FileCode2, FileText, Inbox,
-  Image as ImageIcon, TriangleAlert, X,
+  Image as ImageIcon, TriangleAlert, X, Maximize2, Presentation, Loader2,
 } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { useAgentStore } from "@/stores/agentStore";
 import type { Artifact } from "@/lib/demoData";
 import { GlassBadge, IconButton } from "@/components/ui/glass";
+import { Markdown } from "@/lib/markdown";
 
 /* ─────────── простая подсветка синтаксиса (без зависимостей) ─────────── */
 
@@ -62,12 +63,12 @@ function highlightLine(line: string, lang: string): React.ReactNode {
 
 /* ─────────── просмотрщик кода ─────────── */
 
-function CodeViewer({ artifact }: { artifact: Artifact }) {
+function CodeViewer({ content, lang }: { content: string; lang: string }) {
   const [copied, setCopied] = useState(false);
-  const lines = (artifact.content || "").split("\n");
+  const lines = (content || "").split("\n");
 
   const copy = async () => {
-    await navigator.clipboard.writeText(artifact.content || "");
+    await navigator.clipboard.writeText(content || "");
     setCopied(true);
     toast.success("Скопировано");
     setTimeout(() => setCopied(false), 1500);
@@ -91,7 +92,7 @@ function CodeViewer({ artifact }: { artifact: Artifact }) {
                   {i + 1}
                 </td>
                 <td className="whitespace-pre-wrap break-words text-[rgba(220,235,230,0.95)]">
-                  {highlightLine(line, artifact.lang || "")}
+                  {highlightLine(line, lang || "")}
                 </td>
               </tr>
             ))}
@@ -102,12 +103,195 @@ function CodeViewer({ artifact }: { artifact: Artifact }) {
   );
 }
 
+/* ─────────── догрузка текстового содержимого (код/markdown) ─────────── */
+
+function useTextContent(url: string | undefined, enabled: boolean) {
+  const [state, setState] = useState({ text: "", loading: enabled, error: false });
+  useEffect(() => {
+    if (!enabled || !url) {
+      setState({ text: "", loading: false, error: false });
+      return;
+    }
+    let alive = true;
+    setState({ text: "", loading: true, error: false });
+    fetch(url, { credentials: "include" })
+      .then((r) => {
+        if (!r.ok) throw new Error(String(r.status));
+        return r.text();
+      })
+      .then((t) => {
+        if (!alive) return;
+        setState({ text: t.length > 600000 ? t.slice(0, 600000) + "\n…(обрезано)" : t, loading: false, error: false });
+      })
+      .catch(() => {
+        if (alive) setState({ text: "", loading: false, error: true });
+      });
+    return () => { alive = false; };
+  }, [url, enabled]);
+  return state;
+}
+
+const dlUrl = (a: Artifact) =>
+  a.url ? `${a.url}${a.url.includes("?") ? "&" : "?"}download=1` : undefined;
+
+function CenterBox({ children }: { children: ReactNode }) {
+  return (
+    <div className="glass-light flex flex-1 flex-col items-center justify-center gap-3 rounded-xl p-6 text-center text-xs text-dim">
+      {children}
+    </div>
+  );
+}
+
+function DownloadBox({ a }: { a: Artifact }) {
+  return (
+    <div className="glass-light flex flex-1 flex-col items-center justify-center gap-2 rounded-xl p-6 text-center">
+      <div className="glass-medium flex h-14 w-14 items-center justify-center rounded-2xl">
+        <FileText className="h-6 w-6 text-mint" />
+      </div>
+      <div className="mt-1 text-[13px] text-foreground">{a.name}</div>
+      <div className="text-[11px] text-[rgba(220,235,230,0.6)]">
+        {a.size ? `${a.size} · ` : ""}
+        {new Date(a.updatedAt).toLocaleTimeString("ru", { hour: "2-digit", minute: "2-digit" })}
+      </div>
+      {dlUrl(a) && (
+        <a
+          href={dlUrl(a)}
+          download={a.name}
+          className="glass-medium mt-2 flex items-center gap-2 rounded-xl px-4 py-1.5 text-xs text-foreground transition-colors hover:border-mint/40"
+        >
+          <Download className="h-3.5 w-3.5" /> Скачать
+        </a>
+      )}
+    </div>
+  );
+}
+
+function OfficeBox({ a, onConvert }: { a: Artifact; onConvert: (a: Artifact) => void }) {
+  return (
+    <div className="glass-light flex flex-1 flex-col items-center justify-center gap-3 rounded-xl p-6 text-center">
+      <div className="glass-medium flex h-14 w-14 items-center justify-center rounded-2xl">
+        <Presentation className="h-6 w-6 text-mint" />
+      </div>
+      <div className="text-[13px] text-foreground">{a.name}</div>
+      <div className="text-[11px] text-[rgba(220,235,230,0.6)]">
+        Офисный документ{a.size ? ` · ${a.size}` : ""}
+      </div>
+      <button
+        onClick={() => onConvert(a)}
+        className="glass-medium mt-1 flex items-center gap-2 rounded-xl px-4 py-2 text-xs text-foreground transition-colors hover:border-mint/40"
+      >
+        <FileText className="h-3.5 w-3.5" /> Открыть как PDF
+      </button>
+      {dlUrl(a) && (
+        <a
+          href={dlUrl(a)}
+          download={a.name}
+          className="flex items-center gap-1.5 text-[11px] text-dim transition-colors hover:text-foreground"
+        >
+          <Download className="h-3 w-3" /> Скачать оригинал
+        </a>
+      )}
+      <p className="max-w-[260px] text-[10.5px] leading-relaxed text-[rgba(220,235,230,0.5)]">
+        Агент сконвертирует файл в PDF и пришлёт его в чат.
+      </p>
+    </div>
+  );
+}
+
+/* ─────────── тело просмотрщика по типу файла ─────────── */
+
+function FileBody({
+  a, onConvert, onZoom, onRetry,
+}: {
+  a: Artifact;
+  onConvert: (a: Artifact) => void;
+  onZoom?: () => void;
+  onRetry?: () => void;
+}) {
+  const needsText = a.kind === "code" || a.kind === "markdown";
+  const { text, loading, error } = useTextContent(a.url, needsText);
+
+  if (a.error) {
+    return (
+      <CenterBox>
+        <TriangleAlert className="h-6 w-6 text-amber-300" />
+        <p>Не удалось загрузить файл</p>
+        {onRetry && (
+          <button onClick={onRetry} className="glass-medium rounded-xl px-4 py-1.5 text-xs text-foreground transition-colors hover:border-mint/40">
+            Повторить
+          </button>
+        )}
+      </CenterBox>
+    );
+  }
+
+  if (a.kind === "image") {
+    return (
+      <div className="flex min-h-0 flex-1 items-center justify-center rounded-xl border border-white/[0.08] bg-fern-950/40 p-2">
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img
+          src={a.url}
+          alt={a.name}
+          onClick={onZoom}
+          className={cn("max-h-full w-full rounded-lg object-contain", onZoom && "cursor-zoom-in")}
+        />
+      </div>
+    );
+  }
+
+  if (a.kind === "pdf") {
+    return a.url ? (
+      <iframe
+        src={a.url}
+        title={a.name}
+        className="h-full min-h-0 flex-1 rounded-xl border border-white/[0.08] bg-white"
+      />
+    ) : (
+      <DownloadBox a={a} />
+    );
+  }
+
+  if (a.kind === "office") {
+    return <OfficeBox a={a} onConvert={onConvert} />;
+  }
+
+  if (needsText) {
+    if (loading) {
+      return (
+        <CenterBox>
+          <Loader2 className="h-5 w-5 animate-spin text-mint" />
+          <p>Загрузка содержимого…</p>
+        </CenterBox>
+      );
+    }
+    if (error) {
+      return (
+        <CenterBox>
+          <TriangleAlert className="h-6 w-6 text-amber-300" />
+          <p>Не удалось загрузить содержимое файла</p>
+        </CenterBox>
+      );
+    }
+    if (a.kind === "markdown") {
+      return (
+        <div className="min-h-0 flex-1 overflow-hidden rounded-xl border border-white/[0.08] bg-fern-950/40">
+          <Markdown source={text} />
+        </div>
+      );
+    }
+    return <CodeViewer content={text} lang={a.lang || ""} />;
+  }
+
+  return <DownloadBox a={a} />;
+}
+
 /* ─────────── панель ─────────── */
 
 export function ArtifactPanel({ className }: { className?: string }) {
-  const { artifacts, activeChatId, retryArtifact } = useAgentStore();
+  const { artifacts, activeChatId, retryArtifact, sendMessage } = useAgentStore();
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [lightbox, setLightbox] = useState(false);
+  const [viewerOpen, setViewerOpen] = useState(false);
 
   const list = useMemo(
     () => artifacts.filter((a) => a.chatId === activeChatId),
@@ -116,77 +300,65 @@ export function ArtifactPanel({ className }: { className?: string }) {
   const selected = list.find((a) => a.id === selectedId) || null;
 
   useEffect(() => {
-    if (!lightbox) return;
+    if (!lightbox && !viewerOpen) return;
     const onEsc = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setLightbox(false);
+      if (e.key === "Escape") {
+        setLightbox(false);
+        setViewerOpen(false);
+      }
     };
     window.addEventListener("keydown", onEsc);
     return () => window.removeEventListener("keydown", onEsc);
-  }, [lightbox]);
+  }, [lightbox, viewerOpen]);
+
+  const convertToPdf = (a: Artifact) => {
+    const chatId = a.chatId || activeChatId;
+    if (!chatId) {
+      toast.error("Нет активного чата для конвертации");
+      return;
+    }
+    const text =
+      `Сконвертируй офисный файл «${a.name}» в PDF и пришли мне готовый PDF-файл. ` +
+      `Этот файл относится к нашему чату (ты создал его или получил как вложение) — найди его в своём рабочем каталоге ` +
+      `и выполни конвертацию командой: soffice --headless --convert-to pdf --outdir . <путь к файлу>. ` +
+      `Затем отправь готовый PDF-файл.`;
+    sendMessage(chatId, text);
+    toast.info("Запросил конвертацию в PDF — агент пришлёт файл в чат");
+  };
 
   const kindIcon = (a: Artifact) =>
-    a.kind === "code" ? FileCode2 : a.kind === "image" ? ImageIcon : FileText;
+    a.kind === "code" ? FileCode2 : a.kind === "image" ? ImageIcon : a.kind === "office" ? Presentation : FileText;
 
   return (
     <div className={cn("glass-strong relative flex h-full flex-col overflow-hidden", className)}>
       {/* шапка */}
       <div className="flex items-center gap-2 px-4 pb-2 pt-4">
         {selected ? (
-          <IconButton onClick={() => setSelectedId(null)} aria-label="Назад">
-            <ArrowLeft className="h-4 w-4" />
-          </IconButton>
+          <>
+            <IconButton onClick={() => setSelectedId(null)} aria-label="Назад">
+              <ArrowLeft className="h-4 w-4" />
+            </IconButton>
+            <span className="min-w-0 flex-1 truncate text-[12px] text-dim">{selected.name}</span>
+            <IconButton onClick={() => setViewerOpen(true)} aria-label="Открыть">
+              <Maximize2 className="h-4 w-4" />
+            </IconButton>
+          </>
         ) : (
-          <span className="flex-1 pl-1 text-sm text-mint-soft">Артефакты</span>
+          <>
+            <span className="flex-1 pl-1 text-sm text-mint-soft">Артефакты</span>
+            <GlassBadge>{list.length}</GlassBadge>
+          </>
         )}
-        {!selected && <GlassBadge>{list.length}</GlassBadge>}
       </div>
 
       {selected ? (
         <div className="flex min-h-0 flex-1 flex-col px-3 pb-3">
-          <div className="mb-2 truncate px-1 text-[12px] text-dim">{selected.name}</div>
-          {selected.error ? (
-            <div className="glass-light flex flex-1 flex-col items-center justify-center gap-3 rounded-xl p-6 text-center">
-              <TriangleAlert className="h-6 w-6 text-amber-300" />
-              <p className="text-xs text-dim">Не удалось загрузить файл</p>
-              <button
-                onClick={() => retryArtifact(selected.id)}
-                className="glass-medium rounded-xl px-4 py-1.5 text-xs text-foreground transition-colors hover:border-mint/40"
-              >
-                Повторить
-              </button>
-            </div>
-          ) : selected.kind === "code" ? (
-            <CodeViewer artifact={selected} />
-          ) : selected.kind === "image" ? (
-            <div className="flex min-h-0 flex-1 items-center justify-center rounded-xl border border-white/[0.08] bg-fern-950/40 p-2">
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img
-                src={selected.url}
-                alt={selected.name}
-                onClick={() => setLightbox(true)}
-                className="max-h-full w-full cursor-zoom-in rounded-lg object-contain"
-              />
-            </div>
-          ) : (
-            <div className="glass-light flex flex-1 flex-col items-center justify-center gap-2 rounded-xl p-6 text-center">
-              <div className="glass-medium flex h-14 w-14 items-center justify-center rounded-2xl">
-                <FileText className="h-6 w-6 text-mint" />
-              </div>
-              <div className="mt-1 text-[13px] text-foreground">{selected.name}</div>
-              <div className="text-[11px] text-[rgba(220,235,230,0.6)]">
-                {selected.size} · {new Date(selected.updatedAt).toLocaleTimeString("ru", { hour: "2-digit", minute: "2-digit" })}
-              </div>
-              {selected.url && (
-                <a
-                  href={`${selected.url}${selected.url.includes("?") ? "&" : "?"}download=1`}
-                  download={selected.name}
-                  className="glass-medium mt-2 flex items-center gap-2 rounded-xl px-4 py-1.5 text-xs text-foreground transition-colors hover:border-mint/40"
-                >
-                  <Download className="h-3.5 w-3.5" /> Скачать
-                </a>
-              )}
-            </div>
-          )}
+          <FileBody
+            a={selected}
+            onConvert={convertToPdf}
+            onZoom={() => setLightbox(true)}
+            onRetry={() => retryArtifact(selected.id)}
+          />
         </div>
       ) : list.length === 0 ? (
         <div className="flex flex-1 flex-col items-center justify-center gap-3 px-6 text-center">
@@ -216,7 +388,8 @@ export function ArtifactPanel({ className }: { className?: string }) {
                     {a.error && <TriangleAlert className="h-3 w-3 shrink-0 text-amber-300" />}
                   </div>
                   <div className="text-[11px] text-[rgba(220,235,230,0.6)]">
-                    {a.size} · {new Date(a.updatedAt).toLocaleTimeString("ru", { hour: "2-digit", minute: "2-digit" })}
+                    {a.size ? `${a.size} · ` : ""}
+                    {new Date(a.updatedAt).toLocaleTimeString("ru", { hour: "2-digit", minute: "2-digit" })}
                   </div>
                 </div>
               </button>
@@ -225,7 +398,7 @@ export function ArtifactPanel({ className }: { className?: string }) {
         </div>
       )}
 
-      {/* полноразмерный просмотр изображения */}
+      {/* полноразмерный просмотр изображения (lightbox) */}
       <AnimatePresence>
         {lightbox && selected?.url && (
           <motion.div
@@ -253,6 +426,38 @@ export function ArtifactPanel({ className }: { className?: string }) {
             >
               <X className="h-4 w-4" />
             </button>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* полноэкранный просмотрщик («Открыть») */}
+      <AnimatePresence>
+        {viewerOpen && selected && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.18 }}
+            className="fixed inset-0 z-[70] flex flex-col bg-fern-950/95 backdrop-blur-sm"
+          >
+            <div className="flex items-center gap-2 border-b border-white/[0.06] px-5 py-3">
+              <span className="min-w-0 flex-1 truncate text-sm text-foreground">{selected.name}</span>
+              {dlUrl(selected) && (
+                <a
+                  href={dlUrl(selected)}
+                  download={selected.name}
+                  className="glass-light flex h-8 items-center gap-1.5 rounded-lg px-3 text-[11px] text-dim transition-colors hover:text-foreground"
+                >
+                  <Download className="h-3.5 w-3.5" /> Скачать
+                </a>
+              )}
+              <IconButton onClick={() => setViewerOpen(false)} aria-label="Закрыть (Esc)">
+                <X className="h-4 w-4" />
+              </IconButton>
+            </div>
+            <div className="flex min-h-0 flex-1 flex-col p-4">
+              <FileBody a={selected} onConvert={convertToPdf} onRetry={() => retryArtifact(selected.id)} />
+            </div>
           </motion.div>
         )}
       </AnimatePresence>

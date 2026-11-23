@@ -72,7 +72,7 @@ export interface Turn {
 
 export type DemoChat = Chat & { kind: "chat" | "terminal" | "data" };
 
-export type ArtifactKind = "code" | "image" | "other";
+export type ArtifactKind = "code" | "image" | "pdf" | "office" | "markdown" | "other";
 
 export interface Artifact {
   id: string;
