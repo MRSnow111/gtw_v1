@@ -492,7 +492,12 @@ app.prepare().then(() => {
           sendToClient({ type: "error", error: "model_forbidden", model: String(frame.model || "") });
           return null;
         }
-        return raw;
+        // login из куки — чтобы /model применился к ТОЙ ЖЕ сессии, что и user_message
+        // (иначе override уходит в сессию "gtw", а ходы идут в сессии login -> модель откатывается)
+        const parsed = JSON.parse(raw);
+        parsed.user_id = login;
+        parsed.user_name = login;
+        return JSON.stringify(parsed);
       }
       if (type === "session_info") {
         const chatId = String(frame.chat_id || "main");

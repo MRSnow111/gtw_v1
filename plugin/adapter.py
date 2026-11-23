@@ -635,7 +635,14 @@ class GTWAdapter(BasePlatformAdapter):
         ok = False
         if model and len(model) <= 200 and "\n" not in model and not model.startswith("/"):
             st = self._stats(chat_id)
-            source = self._source_for(chat_id, st["user_id"] or "gtw", st["user_name"] or "GTW")
+            # identity чата фиксируем УЖЕ при switch (server.js шлёт user_id=login):
+            # /model должен примениться к той же сессии, что и последующие user_message,
+            # иначе override уходит в сессию "gtw" и модель откатывается к дефолту профиля.
+            uid = str(frame.get("user_id") or st["user_id"] or "gtw")
+            uname = str(frame.get("user_name") or st["user_name"] or uid)
+            st["user_id"] = uid
+            st["user_name"] = uname
+            source = self._source_for(chat_id, uid, uname)
             command = await self._model_switch_command(model, source)
             try:
                 await self.handle_message(MessageEvent(
