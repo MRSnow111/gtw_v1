@@ -462,6 +462,21 @@ app.prepare().then(() => {
               sendToClient({ type: "error", error: "model_forbidden", model: cur, reason: "current" });
               return null;
             }
+            // B1: новый чат ограниченного пользователя ещё без модели (cur пуст) —
+            // дефолт профиля (напр. qwen3.8) может быть НЕ в белом списке, и тогда
+            // 2-е сообщение блокируется гейтом. Авто-выбираем первую разрешённую и
+            // шлём set_model ДО user_message (тем же путём/очередью), чтобы первый
+            // ход сразу шёл на доступной модели — без гонки с кадром models пикера.
+            if (!cur && allow && allow.length) {
+              const target = allow[0];
+              chatModels.set(chatId, target);
+              const sm = JSON.stringify({ type: "set_model", chat_id: chatId, model: target, user_id: login, user_name: login });
+              if (opened && upstream.readyState === WebSocket.OPEN) {
+                try { upstream.send(sm, { binary: false }); } catch {}
+              } else if (!closed && pending.length < 100) {
+                pending.push({ data: sm, isBinary: false });
+              }
+            }
           }
         }
         // login из подписанной куки, не из клиента (защита от спуфинга)
