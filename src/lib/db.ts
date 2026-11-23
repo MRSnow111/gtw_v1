@@ -82,6 +82,15 @@ export function getDb(): DatabaseSync {
       );
       CREATE INDEX IF NOT EXISTS idx_files_login ON files (login, created_at);
       CREATE INDEX IF NOT EXISTS idx_files_chat ON files (chat_id);
+      CREATE TABLE IF NOT EXISTS chats (
+        login      TEXT NOT NULL,
+        chat_id    TEXT NOT NULL,
+        title      TEXT NOT NULL DEFAULT 'Новый чат',
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        PRIMARY KEY (login, chat_id)
+      );
+      CREATE INDEX IF NOT EXISTS idx_chats_login ON chats (login, updated_at);
     `);
   }
   return db;

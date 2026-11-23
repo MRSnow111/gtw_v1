@@ -1,7 +1,6 @@
 "use client";
 
 import { create } from "zustand";
-import { persist } from "zustand/middleware";
 import { toast } from "sonner";
 import type { Artifact, DemoChat, ToolCall, Turn } from "@/lib/demoData";
 import { seedCommands, formatSize } from "@/lib/demoData";
@@ -13,7 +12,9 @@ import { useAuthStore } from "@/stores/authStore";
 /**
  * LIVE store — тот же интерфейс, что у demoStore, но ходы строятся из реальных
  * WS-кадров gtw-адаптера (typing/draft/message/message_edit/approval/clarify/…).
- * Чаты персистятся в localStorage; история ходов запрашивается у шлюза (history).
+ * Список чатов хранится на СЕРВЕРЕ per-login (/api/chats) и грузится при входе —
+ * изоляция между аккаунтами и синхронизация между устройствами. История ходов
+ * запрашивается у шлюза (history).
  */
 
 const SILENCE_MS = 2500; // тишина после последнего кадра => ход завершён
@@ -91,6 +92,22 @@ function upsertTool(tools: ToolCall[], tc: ToolCall): ToolCall[] {
 
 function userId(): string {
   return useAuthStore.getState().user?.name || "gtw-web";
+}
+
+/** Серверная синхронизация списка чатов (per-login). Ошибки не блокируют UI. */
+function syncChat(chat: DemoChat) {
+  try {
+    fetch("/api/chats", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ chat_id: chat.id, title: chat.title }),
+    }).catch(() => {});
+  } catch {}
+}
+function unsyncChat(id: string) {
+  try {
+    fetch(`/api/chats/${encodeURIComponent(id)}`, { method: "DELETE" }).catch(() => {});
+  } catch {}
 }
 
 /* ─────────────── Маршрутизация кадров шлюза ─────────────── */
@@ -370,9 +387,7 @@ if (typeof window !== "undefined") {
 
 /* ─────────────── Store ─────────────── */
 
-export const useLiveStore = create<DemoState>()(
-  persist(
-    (set, get) => ({
+export const useLiveStore = create<DemoState>()((set, get) => ({
       chats: [],
       turnsByChat: {},
       artifacts: [],
@@ -386,6 +401,26 @@ export const useLiveStore = create<DemoState>()(
       },
 
       setActiveChat: (id) => set({ activeChatId: id }),
+
+      loadChats: async () => {
+        try {
+          const res = await fetch("/api/chats", { cache: "no-store" });
+          if (!res.ok) return;
+          const data = await res.json();
+          const login = userId();
+          const items: DemoChat[] = (data.chats || []).map(
+            (c: { id: string; title: string; createdAt: string; updatedAt: string }) => ({
+              id: c.id,
+              title: c.title,
+              userId: login,
+              createdAt: c.createdAt,
+              updatedAt: c.updatedAt,
+              kind: "chat" as const,
+            })
+          );
+          set({ chats: items });
+        } catch {}
+      },
 
       loadTurns: (chatId) => {
         if (get().turnsByChat[chatId] || get().loadingChats[chatId]) return;
@@ -417,7 +452,7 @@ export const useLiveStore = create<DemoState>()(
                   : c
               )
             : [{
-                id: chatId, title: text.slice(0, 42) || "Новый чат", userId: "u1",
+                id: chatId, title: text.slice(0, 42) || "Новый чат", userId: userId(),
                 createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), kind: "chat" as const,
               }, ...s.chats];
           return {
@@ -426,6 +461,8 @@ export const useLiveStore = create<DemoState>()(
           };
         });
         ensureAgentTurn(chatId);
+        const c = get().chats.find((x) => x.id === chatId);
+        if (c) syncChat(c);
         const ready = (attachments || []).filter((a) => a.status === "ready" && a.fileId);
         gtwSocket.send({
           type: "user_message",
@@ -483,15 +520,19 @@ export const useLiveStore = create<DemoState>()(
 
       createChat: () => {
         const chat: DemoChat = {
-          id: uid("c"), title: "Новый чат", userId: "u1",
+          id: uid("c"), title: "Новый чат", userId: userId(),
           createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), kind: "chat",
         };
         set((s) => ({ chats: [chat, ...s.chats] }));
+        syncChat(chat);
         return chat;
       },
 
-      renameChat: (id, title) =>
-        set((s) => ({ chats: s.chats.map((c) => (c.id === id ? { ...c, title } : c)) })),
+      renameChat: (id, title) => {
+        set((s) => ({ chats: s.chats.map((c) => (c.id === id ? { ...c, title } : c)) }));
+        const c = get().chats.find((x) => x.id === id);
+        if (c) syncChat(c);
+      },
 
       deleteChat: (id) => {
         clearSilence(id);
@@ -501,15 +542,10 @@ export const useLiveStore = create<DemoState>()(
         }));
         const { [id]: _drop, ...rest } = get().turnsByChat;
         set({ turnsByChat: rest });
+        unsyncChat(id);
       },
 
       retryArtifact: () => {
         toast.info("Артефакты приходят от агента автоматически");
       },
-    }),
-    {
-      name: "gtw-chats",
-      partialize: (s) => ({ chats: s.chats }),
-    }
-  )
-);
+}));

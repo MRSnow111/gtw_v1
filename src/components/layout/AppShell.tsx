@@ -4,6 +4,8 @@ import { useEffect, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import { Menu } from "lucide-react";
 import { useUiStore } from "@/stores/uiStore";
+import { useAuthStore } from "@/stores/authStore";
+import { useLiveStore } from "@/stores/liveStore";
 import { useWebSocket } from "@/hooks/useWebSocket";
 import { Sidebar } from "@/components/layout/Sidebar";
 import { ArtifactPanel } from "@/components/artifacts/ArtifactPanel";
@@ -17,9 +19,20 @@ import { cn } from "@/lib/utils";
 export function AppShell({ children }: { children: React.ReactNode }) {
   const { drawerOpen, setDrawerOpen } = useUiStore();
   const [mounted, setMounted] = useState(false);
+  const user = useAuthStore((s) => s.user);
   useWebSocket(); // держит WS-соединение с прокси /ws (live-режим)
 
   useEffect(() => setMounted(true), []);
+
+  // Список чатов — с сервера per-login: при входе/смене аккаунта грузим свой,
+  // при выходе очищаем (изоляция между аккаунтами + синхронизация устройств).
+  useEffect(() => {
+    if (user) {
+      useLiveStore.getState().loadChats?.();
+    } else {
+      useLiveStore.setState({ chats: [], activeChatId: null, turnsByChat: {} });
+    }
+  }, [user?.name]);
 
   // закрытие drawer по Esc
   useEffect(() => {

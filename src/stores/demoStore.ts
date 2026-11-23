@@ -52,6 +52,8 @@ export interface DemoState {
   /** LIVE: статистика сессии по чату (кадр session_info); в demo отсутствует. */
   sessionInfoByChat?: Record<string, import("@/types/events").SessionInfo>;
   requestSessionInfo?: (chatId: string) => void;
+  /** LIVE: загрузить список чатов с сервера (per-login); в demo отсутствует. */
+  loadChats?: () => Promise<void>;
 
   setActiveChat: (id: string | null) => void;
   loadTurns: (chatId: string) => void;
