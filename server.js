@@ -238,6 +238,21 @@ app.prepare().then(() => {
       }
     };
 
+    // Индикатор лимита/расхода токенов в чате: агрегат по логину.
+    // used считаем всегда (даже без лимита), limit — из user_limits (null = без лимита).
+    const sendQuota = () => {
+      const { limit } = quotaFor(login);
+      let used = 0;
+      try {
+        const r = getDb()
+          .prepare("SELECT COALESCE(SUM(tokens_in + tokens_out), 0) AS t FROM usage_stats WHERE login = ?")
+          .get(login);
+        used = (r && r.t) || 0;
+      } catch {}
+      sendToClient({ type: "quota", login, limit, used });
+    };
+    sendQuota(); // стартовый снимок сразу при подключении
+
     upstream.on("open", () => {
       opened = true;
       for (const { data, isBinary } of pending) {
@@ -257,6 +272,7 @@ app.prepare().then(() => {
               recordUsage(frame.info);
               const inf = frame.info;
               if (inf.provider && inf.model) chatModels.set(String(inf.chat_id), `${inf.provider}/${inf.model}`);
+              sendQuota(); // обновляем индикатор лимита после учёта токенов
             } else if (frame.type === "models") {
               const cur = frame.current;
               if (cur && cur.provider && cur.model) chatModels.set(String(frame.chat_id), `${cur.provider}/${cur.model}`);

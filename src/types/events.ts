@@ -89,4 +89,5 @@ export type GtwServerFrame =
   | { type: "models"; chat_id: string; current: { model: string; provider: string }; providers: ModelProvider[]; restricted?: boolean }
   | { type: "set_model_ack"; chat_id: string; model: string; ok: boolean }
   | { type: "status"; chat_id: string; status_key?: string; content: string; metadata?: Record<string, unknown> }
+  | { type: "quota"; login: string; limit: number | null; used: number }
   | { type: "error"; error: string; limit?: number; used?: number; model?: string; reason?: string };

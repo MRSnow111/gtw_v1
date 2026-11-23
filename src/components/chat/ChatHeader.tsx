@@ -10,6 +10,7 @@ import { useAgentStore, DEMO_MODE } from "@/stores/agentStore";
 import { IconButton, StatusDot } from "@/components/ui/glass";
 import { SessionInfoPanel } from "@/components/chat/SessionInfoPanel";
 import { ModelPicker } from "@/components/chat/ModelPicker";
+import { TokenIndicator } from "@/components/chat/TokenIndicator";
 
 export function ChatHeader({ title }: { title?: string }) {
   const status = useWsStore((s) => s.status);
@@ -38,6 +39,7 @@ export function ChatHeader({ title }: { title?: string }) {
         <StatusDot tone={tone} />
         <span className="text-[11.5px] text-dim">{text}</span>
       </div>
+      {!DEMO_MODE && <TokenIndicator />}
       {!DEMO_MODE && activeChatId && <ModelPicker chatId={activeChatId} />}
       <IconButton
         aria-label="Информация о сессии"
