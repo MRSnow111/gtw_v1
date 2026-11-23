@@ -69,6 +69,19 @@ export function getDb(): DatabaseSync {
         models     TEXT NOT NULL,
         updated_at TEXT NOT NULL
       );
+      CREATE TABLE IF NOT EXISTS files (
+        id           TEXT PRIMARY KEY,
+        login        TEXT NOT NULL,
+        chat_id      TEXT NOT NULL DEFAULT '',
+        direction    TEXT NOT NULL CHECK (direction IN ('in', 'out')),
+        name         TEXT NOT NULL,
+        mime         TEXT NOT NULL DEFAULT 'application/octet-stream',
+        size         INTEGER NOT NULL DEFAULT 0,
+        storage_path TEXT NOT NULL,
+        created_at   TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_files_login ON files (login, created_at);
+      CREATE INDEX IF NOT EXISTS idx_files_chat ON files (chat_id);
     `);
   }
   return db;

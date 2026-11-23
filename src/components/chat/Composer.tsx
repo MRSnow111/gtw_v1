@@ -11,7 +11,7 @@ import { cn } from "@/lib/utils";
 import { useWsStore } from "@/stores/wsStore";
 import { useAgentStore, DEMO_MODE } from "@/stores/agentStore";
 import { useUiStore } from "@/stores/uiStore";
-import type { UserAttachment } from "@/lib/demoData";
+import { formatSize, type UserAttachment } from "@/lib/demoData";
 
 interface ComposerProps {
   chatId: string | null;
@@ -19,6 +19,8 @@ interface ComposerProps {
 
 const MAX_LINES = 7;
 const LINE_H = 20;
+const MAX_FILE_MB = 25;
+const MAX_FILES = 10;
 
 export function Composer({ chatId }: ComposerProps) {
   const router = useRouter();
@@ -38,9 +40,12 @@ export function Composer({ chatId }: ComposerProps) {
   const [dragOver, setDragOver] = useState(false);
   const [cmdIndex, setCmdIndex] = useState(0);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const offline = status !== "connected";
   const queueCount = 0;
+  const readyAtts = attachments.filter((a) => a.status === "ready");
+  const uploading = attachments.some((a) => a.status === "uploading");
 
   /* фокус из welcome-карточек */
   useEffect(() => {
@@ -70,14 +75,16 @@ export function Composer({ chatId }: ComposerProps) {
 
   const doSend = () => {
     const trimmed = text.trim();
-    if (!trimmed || running) return;
+    const ready = attachments.filter((a) => a.status === "ready" && a.fileId);
+    const isUploading = attachments.some((a) => a.status === "uploading");
+    if ((!trimmed && ready.length === 0) || running || isUploading) return;
     setText("");
     setAttachments([]);
     const store = useAgentStore.getState();
     if (chatId) {
-      store.sendMessage(chatId, trimmed);
+      store.sendMessage(chatId, trimmed, ready);
     } else {
-      const id = store.startChatWithMessage(trimmed);
+      const id = store.startChatWithMessage(trimmed, ready);
       store.setActiveChat(id);
       router.push(`/chat/${id}`);
     }
@@ -119,10 +126,77 @@ export function Composer({ chatId }: ComposerProps) {
     }
   };
 
-  /* загрузка файлов: в live-режиме появится позже, в демо — имитация */
+  const updateAtt = (key: string, patch: Partial<UserAttachment>) =>
+    setAttachments((a) => a.map((x) => (x.key === key ? { ...x, ...patch } : x)));
+
+  /* реальная загрузка файлов (live): POST /api/files, прогресс через XHR */
+  const uploadFiles = (files: FileList | File[]) => {
+    const arr = Array.from(files);
+    if (!arr.length) return;
+    const room = MAX_FILES - attachments.length;
+    if (room <= 0) {
+      toast.error(`Не более ${MAX_FILES} файлов за раз`);
+      return;
+    }
+    for (const file of arr.slice(0, room)) {
+      if (file.size > MAX_FILE_MB * 1024 * 1024) {
+        toast.error(`«${file.name}» больше ${MAX_FILE_MB} МБ`);
+        continue;
+      }
+      if (file.size === 0) {
+        toast.error(`«${file.name}» пустой`);
+        continue;
+      }
+      const key = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
+      const att: UserAttachment = {
+        key, name: file.name, size: formatSize(file.size),
+        status: "uploading", progress: 0, mime: file.type || undefined, sizeBytes: file.size,
+      };
+      setAttachments((a) => [...a, att]);
+      const form = new FormData();
+      form.append("file", file);
+      if (chatId) form.append("chat_id", chatId);
+      const xhr = new XMLHttpRequest();
+      xhr.open("POST", "/api/files");
+      xhr.upload.onprogress = (e) => {
+        if (e.lengthComputable) updateAtt(key, { progress: Math.round((e.loaded / e.total) * 100) });
+      };
+      xhr.onload = () => {
+        if (xhr.status >= 200 && xhr.status < 300) {
+          try {
+            const d = JSON.parse(xhr.responseText);
+            updateAtt(key, {
+              fileId: d.id, url: d.url, mime: d.mime, sizeBytes: d.size,
+              name: d.name, size: formatSize(d.size), status: "ready", progress: 100,
+            });
+          } catch {
+            updateAtt(key, { status: "failed" });
+            toast.error("Не удалось разобрать ответ сервера");
+          }
+        } else {
+          updateAtt(key, { status: "failed" });
+          let msg = `Ошибка загрузки (${xhr.status})`;
+          try {
+            const d = JSON.parse(xhr.responseText);
+            if (d.code === "too_large") msg = `Файл больше ${MAX_FILE_MB} МБ`;
+            else if (d.code === "unauthorized") msg = "Сессия истекла — войдите снова";
+            else if (d.code === "empty_file") msg = "Файл пустой";
+          } catch { /* ignore */ }
+          toast.error(msg);
+        }
+      };
+      xhr.onerror = () => {
+        updateAtt(key, { status: "failed" });
+        toast.error("Сеть недоступна при загрузке");
+      };
+      xhr.send(form);
+    }
+  };
+
+  /* загрузка файлов: live — реальный выбор файла, демо — имитация */
   const addFile = () => {
     if (!DEMO_MODE) {
-      toast.info("Загрузка файлов появится в следующей версии");
+      fileInputRef.current?.click();
       return;
     }
     const n = attachments.length + 1;
@@ -210,19 +284,31 @@ export function Composer({ chatId }: ComposerProps) {
           onDrop={(e) => {
             e.preventDefault();
             setDragOver(false);
-            addFile();
+            if (DEMO_MODE) addFile();
+            else if (e.dataTransfer.files?.length) uploadFiles(e.dataTransfer.files);
           }}
           className={cn(
             "glass-medium relative rounded-[24px] p-3 transition-all duration-200",
             dragOver && "border-mint/60 bg-mint/[0.07] shadow-[0_0_32px_rgba(143,184,174,0.25)]"
           )}
         >
+          <input
+            ref={fileInputRef}
+            type="file"
+            multiple
+            className="hidden"
+            onChange={(e) => {
+              if (e.target.files?.length) uploadFiles(e.target.files);
+              e.target.value = "";
+            }}
+          />
+
           {/* чипы вложений */}
           {attachments.length > 0 && (
             <div className="mb-2.5 flex flex-wrap gap-1.5">
               {attachments.map((a, i) => (
                 <div
-                  key={i}
+                  key={a.key || i}
                   className={cn(
                     "glass-light relative flex items-center gap-2 overflow-hidden rounded-lg px-2.5 py-1.5",
                     a.status === "failed" && "border-red-400/40 bg-red-500/10"
@@ -293,7 +379,7 @@ export function Composer({ chatId }: ComposerProps) {
             <motion.button
               whileTap={{ scale: 0.92 }}
               onClick={generating ? doStop : doSend}
-              disabled={!generating && (!text.trim() || offline)}
+              disabled={!generating && ((!text.trim() && readyAtts.length === 0) || offline || uploading)}
               className={cn(
                 "flex h-9 w-9 items-center justify-center rounded-full transition-all duration-200",
                 generating

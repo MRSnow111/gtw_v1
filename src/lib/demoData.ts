@@ -35,10 +35,15 @@ export interface Clarify {
 }
 
 export interface UserAttachment {
+  key?: string;
   name: string;
   size: string;
   status: "uploading" | "ready" | "failed";
   progress?: number;
+  fileId?: string;
+  url?: string;
+  mime?: string;
+  sizeBytes?: number;
 }
 
 export interface Turn {
@@ -80,6 +85,9 @@ export interface Artifact {
   lang?: string;
   url?: string;
   error?: boolean;
+  fileId?: string;
+  mime?: string;
+  sizeBytes?: number;
 }
 
 export interface Command {

@@ -4,7 +4,7 @@ import { create } from "zustand";
 import { persist } from "zustand/middleware";
 import { toast } from "sonner";
 import type { Artifact, DemoChat, ToolCall, Turn } from "@/lib/demoData";
-import { seedCommands } from "@/lib/demoData";
+import { seedCommands, formatSize } from "@/lib/demoData";
 import type { DemoState } from "@/stores/demoStore";
 import { gtwSocket } from "@/lib/gtwSocket";
 import type { ApprovalChoice, GtwServerFrame } from "@/types/events";
@@ -237,15 +237,21 @@ function onFrame(frame: GtwServerFrame) {
     }
 
     case "artifact": {
-      const name = frame.caption || frame.url.split("/").pop() || "артефакт";
+      const mime = frame.mime || "";
+      const isImage = frame.kind === "image" || mime.startsWith("image/");
+      const name = frame.name || frame.caption || frame.url.split("/").pop() || "артефакт";
+      const sizeBytes = typeof frame.size === "number" ? frame.size : 0;
       const art: Artifact = {
         id: uid("ar"),
         chatId: frame.chat_id,
         name,
-        kind: frame.kind === "image" ? "image" : "other",
-        size: "",
+        kind: isImage ? "image" : "other",
+        size: sizeBytes ? formatSize(sizeBytes) : "",
         updatedAt: new Date().toISOString(),
         url: frame.url,
+        fileId: frame.fileId,
+        mime,
+        sizeBytes,
       };
       useLiveStore.setState((s) => ({ artifacts: [art, ...s.artifacts] }));
       break;
@@ -397,8 +403,11 @@ export const useLiveStore = create<DemoState>()(
         }, 6000);
       },
 
-      sendMessage: (chatId, text) => {
-        const userTurn: Turn = { id: uid("tu"), kind: "user", createdAt: Date.now(), text, status: "done" };
+      sendMessage: (chatId, text, attachments) => {
+        const userTurn: Turn = {
+          id: uid("tu"), kind: "user", createdAt: Date.now(), text,
+          attachments: attachments?.length ? attachments : undefined, status: "done",
+        };
         set((s) => {
           const exists = s.chats.some((c) => c.id === chatId);
           const chats = exists
@@ -417,6 +426,7 @@ export const useLiveStore = create<DemoState>()(
           };
         });
         ensureAgentTurn(chatId);
+        const ready = (attachments || []).filter((a) => a.status === "ready" && a.fileId);
         gtwSocket.send({
           type: "user_message",
           chat_id: chatId,
@@ -424,12 +434,15 @@ export const useLiveStore = create<DemoState>()(
           message_id: uid("m"),
           user_id: userId(),
           user_name: userId(),
+          ...(ready.length
+            ? { attachments: ready.map((a) => ({ fileId: a.fileId as string, name: a.name, mime: a.mime, size: a.sizeBytes })) }
+            : {}),
         });
       },
 
-      startChatWithMessage: (text) => {
+      startChatWithMessage: (text, attachments) => {
         const chat = get().createChat();
-        get().sendMessage(chat.id, text);
+        get().sendMessage(chat.id, text, attachments);
         return chat.id;
       },
 

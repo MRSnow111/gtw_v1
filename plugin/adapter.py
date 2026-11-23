@@ -46,7 +46,10 @@ import dataclasses
 import datetime
 import json
 import logging
+import mimetypes
+import os
 import re
+import shutil
 import subprocess
 import sys
 import threading
@@ -683,7 +686,10 @@ class GTWAdapter(BasePlatformAdapter):
     async def _inbound_message(self, frame: dict[str, Any]) -> None:
         text = str(frame.get("text") or "").strip()
         chat_id = str(frame.get("chat_id") or "main")
-        if not text:
+        attachments = frame.get("attachments") or []
+        if not isinstance(attachments, list):
+            attachments = []
+        if not text and not attachments:
             return
         message_id = str(frame.get("message_id") or _ms_id())
         if self._dedup.is_duplicate(message_id):
@@ -702,7 +708,36 @@ class GTWAdapter(BasePlatformAdapter):
                 self._admin_logins.discard(user_id)
         st["turns"] += 1
         self._touch(chat_id)
-        self._remember(chat_id, "user", text, message_id)
+        self._remember(chat_id, "user", text or "(вложение)", message_id)
+        # Вложения -> кэш launch-home (нативная конвенция ядра: media_urls = host-путь;
+        # ядро само переносит в cache профиля и делает agent-visible). До роутинга.
+        media_urls: list[str] = []
+        media_types: list[str] = []
+        media_filenames: list[str] = []
+        if attachments:
+            try:
+                from hermes_constants import get_hermes_home
+                safe_chat = re.sub(r"[^\w.\-]", "_", chat_id)[:80] or "chat"
+                cache_root = Path(get_hermes_home()) / "cache" / "gtw" / safe_chat
+                for att in attachments[:10]:
+                    if not isinstance(att, dict):
+                        continue
+                    src = str(att.get("storage_path") or "")
+                    name = str(att.get("name") or "file")
+                    if not src or not os.path.isfile(src):
+                        continue
+                    fid = re.sub(r"[^\w.\-]", "_", str(att.get("fileId") or uuid.uuid4().hex))[:64]
+                    safe_name = re.sub(r"[^\w.\-]", "_", name)[:120] or "file"
+                    dest_dir = cache_root / fid
+                    dest_dir.mkdir(parents=True, exist_ok=True)
+                    dest = dest_dir / safe_name
+                    shutil.copyfile(src, dest)
+                    mime = str(att.get("mime") or mimetypes.guess_type(safe_name)[0] or "application/octet-stream")
+                    media_urls.append(str(dest))
+                    media_types.append(mime)
+                    media_filenames.append(name)
+            except Exception:
+                logger.exception("GTW: attachment cache failed")
         # Изоляция: гарантировать профиль пользователя + маршрут до построения source.
         # Блокирующий провизион+инжекция маршрута — в отдельном потоке (цикл свободен).
         if user_id != "gtw" and self._multiplex_on():
@@ -717,7 +752,8 @@ class GTWAdapter(BasePlatformAdapter):
         await self.handle_message(MessageEvent(
             text=text, message_type=MessageType.TEXT, source=source,
             user_id=user_id, user_name=user_name,
-            message_id=message_id, timestamp=datetime.datetime.now()))
+            message_id=message_id, timestamp=datetime.datetime.now(),
+            media_urls=media_urls, media_types=media_types, media_filenames=media_filenames))
 
     async def _resolve_approval(self, frame: dict[str, Any]) -> None:
         from tools.approval import resolve_gateway_approval_card
@@ -830,14 +866,65 @@ class GTWAdapter(BasePlatformAdapter):
             return SendResult(success=True, message_id=clarify_id)
         return await super().send_clarify(chat_id, question, choices, clarify_id, session_key, metadata)
 
+    def _resolve_media_host_path(self, path: str, chat_id: str) -> Optional[str]:
+        """Путь артефакта агента -> читаемый host-путь (sandbox->host трансляция ядра).
+
+        Сначала проверяем, не host-ли это файл уже; иначе штатная трансляция
+        validate_media_delivery_path / _translate_docker_container_media_path
+        (denylist/allowlist ядра, scope активного профиля). None — не удалось.
+        """
+        p = str(path or "").strip()
+        if not p:
+            return None
+        try:
+            if os.path.isfile(p) and os.access(p, os.R_OK):
+                return os.path.abspath(p)
+        except Exception:
+            pass
+        try:
+            from gateway.platforms.base import validate_media_delivery_path
+            r = validate_media_delivery_path(p, session_key=None)
+            if r and os.path.isfile(r):
+                return str(r)
+        except Exception:
+            pass
+        try:
+            from gateway.platforms.base import _translate_docker_container_media_path
+            r = _translate_docker_container_media_path(Path(p), session_key=None)
+            if r is not None and r.is_file():
+                return str(r)
+        except Exception:
+            pass
+        return None
+
+    @staticmethod
+    def _media_meta(host_path: str) -> tuple[str, str, int]:
+        name = os.path.basename(host_path)
+        mime = mimetypes.guess_type(name)[0] or "application/octet-stream"
+        try:
+            size = os.path.getsize(host_path)
+        except Exception:
+            size = 0
+        return name, mime, size
+
     async def send_image(self, chat_id: str, image_url: str, caption: Optional[str] = None, **kw):
-        await self._broadcast({"type": "artifact", "chat_id": chat_id, "kind": "image",
-                               "url": image_url, "caption": caption})
+        host = self._resolve_media_host_path(image_url, chat_id)
+        frame = {"type": "artifact", "chat_id": chat_id, "kind": "image",
+                 "url": host or str(image_url), "caption": caption}
+        if host:
+            name, mime, size = self._media_meta(host)
+            frame.update(name=name, mime=mime, size=size)
+        await self._broadcast(frame)
         return SendResult(success=True, message_id=_ms_id())
 
     async def send_document(self, chat_id: str, path: str, caption: Optional[str] = None, **kw):
-        await self._broadcast({"type": "artifact", "chat_id": chat_id, "kind": "document",
-                               "url": str(path), "caption": caption})
+        host = self._resolve_media_host_path(path, chat_id)
+        frame = {"type": "artifact", "chat_id": chat_id, "kind": "document",
+                 "url": host or str(path), "caption": caption}
+        if host:
+            name, mime, size = self._media_meta(host)
+            frame.update(name=name, mime=mime, size=size)
+        await self._broadcast(frame)
         return SendResult(success=True, message_id=_ms_id())
 
     async def get_chat_info(self, chat_id: str) -> dict[str, Any]:

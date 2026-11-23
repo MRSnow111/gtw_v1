@@ -13,7 +13,8 @@
  * Запуск: npm start  (NODE_ENV=production node server.js)
  */
 const { createServer } = require("http");
-const { createHmac, timingSafeEqual } = require("crypto");
+const { createHmac, timingSafeEqual, randomUUID } = require("crypto");
+const os = require("os");
 const path = require("path");
 const fs = require("fs");
 const next = require("next");
@@ -61,6 +62,19 @@ function getDb() {
         models     TEXT NOT NULL,
         updated_at TEXT NOT NULL
       );
+      CREATE TABLE IF NOT EXISTS files (
+        id           TEXT PRIMARY KEY,
+        login        TEXT NOT NULL,
+        chat_id      TEXT NOT NULL DEFAULT '',
+        direction    TEXT NOT NULL CHECK (direction IN ('in', 'out')),
+        name         TEXT NOT NULL,
+        mime         TEXT NOT NULL DEFAULT 'application/octet-stream',
+        size         INTEGER NOT NULL DEFAULT 0,
+        storage_path TEXT NOT NULL,
+        created_at   TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_files_login ON files (login, created_at);
+      CREATE INDEX IF NOT EXISTS idx_files_chat ON files (chat_id);
     `);
   }
   return db;
@@ -119,6 +133,66 @@ function recordUsage(info) {
 }
 const chatOwners = new Map(); // chat_id -> login (из user_message этой сессии)
 const chatModels = new Map(); // chat_id -> "provider/model" (текущая модель из кадров шлюза)
+
+/* ── Файлы: стор + реестр (тот же layout, что src/lib/fileStore.ts) ── */
+const MAX_FILE_SIZE = 25 * 1024 * 1024; // 25 МБ на файл (MVP)
+const FILESTORE_ROOT = process.env.GTW_FILESTORE_DIR || path.join(DATA_DIR, "filestore");
+const HERMES_HOME = process.env.HERMES_HOME || path.join(os.homedir(), ".hermes");
+// доп. корни-источники артефактов (для бенча/тестов; на бою хватает HERMES_HOME)
+const ARTIFACT_EXTRA_ROOTS = (process.env.GTW_ARTIFACT_ROOTS || "").split(":").filter(Boolean);
+
+function sanitizeLoginJs(login) {
+  return String(login || "").replace(/[^a-zA-Z0-9_-]/g, "_").slice(0, 64) || "user";
+}
+function sanitizeNameJs(name) {
+  let base = String(name || "").split(/[\\/]/).pop() || "file";
+  base = base.replace(/[\u0000-\u001f\u007f]/g, "").replace(/[<>:"|?*]/g, "_").trim().replace(/^\.+/, "").slice(0, 120);
+  if (!base || base === "." || base === "..") base = "file";
+  return base;
+}
+/** Путь-источник артефакта должен лежать под доверенным корнем (anti-traversal). */
+function artifactSourceAllowed(p) {
+  const abs = path.resolve(String(p || ""));
+  const roots = [HERMES_HOME, FILESTORE_ROOT, ...ARTIFACT_EXTRA_ROOTS].map((r) => path.resolve(r));
+  return roots.some((r) => abs === r || abs.startsWith(r + path.sep));
+}
+/** Скопировать артефакт агента в стор + реестр (direction=out), вернуть метаданные. */
+function registerArtifact(login, chatId, srcPath, name, mime) {
+  const id = randomUUID();
+  const safe = sanitizeNameJs(name || path.basename(srcPath));
+  const dir = path.join(FILESTORE_ROOT, sanitizeLoginJs(login), id);
+  fs.mkdirSync(dir, { recursive: true });
+  const dest = path.join(dir, safe);
+  fs.copyFileSync(srcPath, dest);
+  const size = fs.statSync(dest).size;
+  const finalMime = mime || "application/octet-stream";
+  getDb()
+    .prepare(
+      `INSERT INTO files (id, login, chat_id, direction, name, mime, size, storage_path, created_at)
+       VALUES (?, ?, ?, 'out', ?, ?, ?, ?, ?) ON CONFLICT(id) DO NOTHING`
+    )
+    .run(id, login, chatId, safe, finalMime, size, dest, new Date().toISOString());
+  return { id, url: `/api/files/${id}`, name: safe, mime: finalMime, size };
+}
+/** Резолв вложений пользователя: только свои файлы (direction=in), с путём в сторе. */
+function resolveAttachments(login, isAdmin, attachments) {
+  const out = [];
+  if (!Array.isArray(attachments)) return out;
+  for (const att of attachments.slice(0, 10)) {
+    const fileId = String((att && att.fileId) || "");
+    if (!fileId) continue;
+    try {
+      const row = getDb().prepare("SELECT * FROM files WHERE id = ?").get(fileId);
+      if (!row || row.direction !== "in") continue;
+      if (!isAdmin && row.login !== login) continue;
+      if (!row.storage_path || !fs.existsSync(row.storage_path)) continue;
+      out.push({ fileId: row.id, name: row.name, mime: row.mime, size: row.size, storage_path: row.storage_path });
+    } catch {
+      /* skip */
+    }
+  }
+  return out;
+}
 
 /** Белый список моделей логина (user_models): null = все разрешены. fail-open при сбое БД. */
 function allowlistFor(login) {
@@ -265,7 +339,7 @@ app.prepare().then(() => {
       // сниффим служебные кадры: учёт токенов, текущая модель, фильтр каталога
       if (!isBinary && data.length < 256 * 1024) {
         const head = data.slice(0, 48).toString("utf8");
-        if (head.includes('"session_info"') || head.includes('"models"') || head.includes('"set_model_ack"')) {
+        if (head.includes('"session_info"') || head.includes('"models"') || head.includes('"set_model_ack"') || head.includes('"artifact"')) {
           try {
             const frame = JSON.parse(data.toString("utf8"));
             if (frame.type === "session_info" && frame.info) {
@@ -289,6 +363,27 @@ app.prepare().then(() => {
             } else if (frame.type === "set_model_ack" && frame.ok) {
               const mdl = String(frame.model || "");
               if (mdl.includes("/")) chatModels.set(String(frame.chat_id), mdl);
+            } else if (frame.type === "artifact") {
+              // артефакт агента: url — host-путь файла. Копируем в стор + реестр,
+              // подменяем url на /api/files/<id> (браузер не видит сырой путь).
+              const chatId = String(frame.chat_id || "");
+              const src = String(frame.url || "");
+              if (src && !src.startsWith("/api/files/")) {
+                try {
+                  const st = fs.existsSync(src) ? fs.statSync(src) : null;
+                  if (st && st.isFile() && st.size <= MAX_FILE_SIZE && artifactSourceAllowed(src)) {
+                    const reg = registerArtifact(login, chatId, src, frame.name, frame.mime);
+                    frame.url = reg.url;
+                    frame.fileId = reg.id;
+                    frame.name = reg.name;
+                    frame.mime = reg.mime;
+                    frame.size = reg.size;
+                    outData = Buffer.from(JSON.stringify(frame), "utf8");
+                  }
+                } catch (e) {
+                  console.error("[gtw-proxy] artifact register failed:", e.message);
+                }
+              }
             }
           } catch {}
         }
@@ -342,6 +437,12 @@ app.prepare().then(() => {
         frame.user_id = login;
         frame.user_name = login;
         frame.role = isAdmin ? "admin" : "user"; // админ не изолируется по профилю
+        // вложения: только свои файлы (direction=in), адаптеру отдаём storage_path
+        if (Array.isArray(frame.attachments) && frame.attachments.length) {
+          frame.attachments = resolveAttachments(login, isAdmin, frame.attachments);
+        } else {
+          delete frame.attachments;
+        }
         return JSON.stringify(frame);
       }
       if (type === "sessions") {

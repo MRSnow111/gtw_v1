@@ -182,12 +182,22 @@ export function ArtifactPanel({ className }: { className?: string }) {
               <div className="text-[11px] text-[rgba(220,235,230,0.6)]">
                 {selected.size} · {new Date(selected.updatedAt).toLocaleTimeString("ru", { hour: "2-digit", minute: "2-digit" })}
               </div>
-              <button
-                onClick={() => toast.info("Скачивание появится вместе с бэкендом")}
-                className="glass-medium mt-2 flex items-center gap-2 rounded-xl px-4 py-1.5 text-xs text-foreground transition-colors hover:border-mint/40"
-              >
-                <Download className="h-3.5 w-3.5" /> Скачать
-              </button>
+              {selected.url ? (
+                <a
+                  href={`${selected.url}${selected.url.includes("?") ? "&" : "?"}download=1`}
+                  download={selected.name}
+                  className="glass-medium mt-2 flex items-center gap-2 rounded-xl px-4 py-1.5 text-xs text-foreground transition-colors hover:border-mint/40"
+                >
+                  <Download className="h-3.5 w-3.5" /> Скачать
+                </a>
+              ) : (
+                <button
+                  onClick={() => toast.info("Скачивание появится вместе с бэкендом")}
+                  className="glass-medium mt-2 flex items-center gap-2 rounded-xl px-4 py-1.5 text-xs text-foreground transition-colors hover:border-mint/40"
+                >
+                  <Download className="h-3.5 w-3.5" /> Скачать
+                </button>
+              )}
             </div>
           )}
         </div>

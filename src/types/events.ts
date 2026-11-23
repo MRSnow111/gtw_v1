@@ -47,7 +47,7 @@ export interface ModelProvider {
 }
 
 export type GtwClientFrame =
-  | { type: "user_message"; chat_id: string; text: string; message_id?: string; user_id?: string; user_name?: string }
+  | { type: "user_message"; chat_id: string; text: string; message_id?: string; user_id?: string; user_name?: string; attachments?: { fileId: string; name?: string; mime?: string; size?: number }[] }
   | { type: "approval_response"; request_id: string; choice: ApprovalChoice; user_id?: string }
   | { type: "clarify_response"; clarify_id: string; response: string }
   | { type: "stop"; chat_id: string; user_id?: string }
@@ -82,7 +82,7 @@ export type GtwServerFrame =
       multi_select?: boolean;
     }
   | { type: "clarify_ack"; clarify_id: string; resolved: boolean }
-  | { type: "artifact"; chat_id: string; kind: "image" | "document"; url: string; caption?: string }
+  | { type: "artifact"; chat_id: string; kind: "image" | "document"; url: string; caption?: string; name?: string; mime?: string; size?: number; fileId?: string }
   | { type: "history"; chat_id: string; items: HistoryItem[] }
   | { type: "session_info"; info: SessionInfo }
   | { type: "sessions"; items: SessionInfo[] }

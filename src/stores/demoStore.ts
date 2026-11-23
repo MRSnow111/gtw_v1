@@ -1,7 +1,7 @@
 "use client";
 
 import { create } from "zustand";
-import type { Artifact, Approval, DemoChat, Turn } from "@/lib/demoData";
+import type { Artifact, Approval, DemoChat, Turn, UserAttachment } from "@/lib/demoData";
 import { seedArtifacts, seedChats, seedCommands, seedTurns } from "@/lib/demoData";
 
 /**
@@ -55,8 +55,8 @@ export interface DemoState {
 
   setActiveChat: (id: string | null) => void;
   loadTurns: (chatId: string) => void;
-  sendMessage: (chatId: string, text: string) => void;
-  startChatWithMessage: (text: string) => string;
+  sendMessage: (chatId: string, text: string, attachments?: UserAttachment[]) => void;
+  startChatWithMessage: (text: string, attachments?: UserAttachment[]) => string;
   stop: (chatId: string) => void;
   decide: (chatId: string, turnId: string, approvalId: string, choice: string, comment?: string) => void;
   answerClarify: (chatId: string, turnId: string, clarifyId: string, response: string) => void;
@@ -92,10 +92,10 @@ export const useDemoStore = create<DemoState>((set, get) => ({
     }, `load:${chatId}`);
   },
 
-  sendMessage: (chatId, text) => {
+  sendMessage: (chatId, text, attachments) => {
     const userTurn: Turn = {
       id: `tu${Date.now()}`, kind: "user", createdAt: Date.now(),
-      text, status: "done",
+      text, attachments: attachments?.length ? attachments : undefined, status: "done",
     };
     set((s) => ({
       turnsByChat: { ...s.turnsByChat, [chatId]: [...(s.turnsByChat[chatId] || []), userTurn] },
@@ -108,7 +108,7 @@ export const useDemoStore = create<DemoState>((set, get) => ({
     runAgent(chatId);
   },
 
-  startChatWithMessage: (text) => {
+  startChatWithMessage: (text, attachments) => {
     const chat = get().createChat();
     chat.title = text.slice(0, 42) || "Новый чат";
     set((s) => ({
@@ -117,7 +117,7 @@ export const useDemoStore = create<DemoState>((set, get) => ({
         ...s.turnsByChat,
         [chat.id]: [{
           id: `tu${Date.now()}`, kind: "user", createdAt: Date.now(),
-          text, status: "done",
+          text, attachments: attachments?.length ? attachments : undefined, status: "done",
         }],
       },
     }));
