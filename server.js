@@ -423,7 +423,7 @@ app.prepare().then(() => {
                 const allow = allowlistFor(login);
                 if (allow) {
                   frame.providers = (frame.providers || [])
-                    .map((p) => ({ ...p, models: (p.models || []).filter((m) => allow.includes(`${p.name}/${m}`)) }))
+                    .map((p) => ({ ...p, models: (p.models || []).filter((m) => modelAllowed(allow, `${p.name}/${m}`)) }))
                     .filter((p) => p.models && p.models.length);
                   frame.restricted = true;
                   outData = Buffer.from(JSON.stringify(frame), "utf8");
@@ -494,18 +494,16 @@ app.prepare().then(() => {
               return null;
             }
           } else {
-            // текущая модель чата должна быть разрешена (иначе — выбрать в пикере)
+            // Текущая модель чата должна быть разрешена. Если она НЕ в белом списке
+            // (напр. дефолт профиля qwen3.8-flash у ограниченного пользователя) или
+            // ещё не выбрана — авто-выбираем первую разрешённую и шлём set_model ДО
+            // user_message (тем же путём/очередью), чтобы ход сразу шёл на доступной
+            // модели. Раньше не-разрешённая текущая модель блокировала чат ошибкой
+            // model_forbidden reason:current, а авто-выбор срабатывал только при пустой
+            // модели — чат «переставал работать», пока пользователь не откроет пикер.
             const cur = chatModels.get(chatId);
-            if (cur && !modelAllowed(allow, cur)) {
-              sendToClient({ type: "error", error: "model_forbidden", model: cur, reason: "current" });
-              return null;
-            }
-            // B1: новый чат ограниченного пользователя ещё без модели (cur пуст) —
-            // дефолт профиля (напр. qwen3.8) может быть НЕ в белом списке, и тогда
-            // 2-е сообщение блокируется гейтом. Авто-выбираем первую разрешённую и
-            // шлём set_model ДО user_message (тем же путём/очередью), чтобы первый
-            // ход сразу шёл на доступной модели — без гонки с кадром models пикера.
-            if (!cur && allow && allow.length) {
+            const curOk = !!cur && modelAllowed(allow, cur);
+            if (!curOk && allow && allow.length) {
               const target = allow[0];
               chatModels.set(chatId, target);
               const sm = JSON.stringify({ type: "set_model", chat_id: chatId, model: target, user_id: login, user_name: login });
