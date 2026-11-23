@@ -206,13 +206,37 @@ function allowlistFor(login) {
     return null;
   }
 }
-/** Разрешена ли модель: "provider/model" или голый "model" (матч по суффиксу). */
+/** Карта slug→display имён провайдеров из каталога (кадр models, поле slug).
+ *  session_info/models.current несут slug (alibaba-token-plan, custom:selectel_router_api),
+ *  а каталог и белый список — display («Alibaba Cloud (Token Plan)», Selectel_Router_api).
+ *  Без нормализации гейт сравнивает разные формы и блокирует РАЗРЕШЁННУЮ модель
+ *  (model_forbidden reason:current сразу после переключения). */
+const providerSlugToDisplay = new Map();
+function learnProviders(providers) {
+  for (const p of providers || []) {
+    const slug = String((p && p.slug) || "");
+    const name = String((p && p.name) || "");
+    if (slug && name) providerSlugToDisplay.set(slug, name);
+  }
+}
+/** «provider/model» -> display-форма провайдера (первый «/» отделяет провайдера;
+ *  id модели может быть роутерным «anthropic/claude-...»). Голый model — без изменений. */
+function normModelKey(key) {
+  const t = String(key || "").trim();
+  const i = t.indexOf("/");
+  if (i <= 0) return t;
+  const prov = t.slice(0, i);
+  return (providerSlugToDisplay.get(prov) || prov) + "/" + t.slice(i + 1);
+}
+/** Разрешена ли модель: "provider/model" или голый "model" (матч по суффиксу).
+ *  Обе стороны нормализуются к display-форме провайдера. */
 function modelAllowed(allow, target) {
   if (!allow || !allow.length) return true;
-  const t = String(target || "").trim();
+  const t = normModelKey(target);
   if (!t) return false;
-  if (allow.includes(t)) return true;
-  if (!t.includes("/")) return allow.some((a) => a.endsWith("/" + t));
+  const norm = allow.map((a) => normModelKey(a));
+  if (norm.includes(t)) return true;
+  if (!t.includes("/")) return norm.some((a) => a.endsWith("/" + t));
   return false;
 }
 
@@ -345,11 +369,18 @@ app.prepare().then(() => {
             if (frame.type === "session_info" && frame.info) {
               recordUsage(frame.info);
               const inf = frame.info;
-              if (inf.provider && inf.model) chatModels.set(String(inf.chat_id), `${inf.provider}/${inf.model}`);
+              if (inf.provider && inf.model) chatModels.set(String(inf.chat_id), normModelKey(`${inf.provider}/${inf.model}`));
               sendQuota(); // обновляем индикатор лимита после учёта токенов
             } else if (frame.type === "models") {
+              learnProviders(frame.providers); // карта slug→display для гейта/пикера
               const cur = frame.current;
-              if (cur && cur.provider && cur.model) chatModels.set(String(frame.chat_id), `${cur.provider}/${cur.model}`);
+              if (cur && cur.provider && cur.model) {
+                // current к display: пикер подсвечивает текущую модель (ключи каталога —
+                // display), гейт хранит chatModels в той же форме.
+                cur.provider = providerSlugToDisplay.get(cur.provider) || cur.provider;
+                chatModels.set(String(frame.chat_id), `${cur.provider}/${cur.model}`);
+                outData = Buffer.from(JSON.stringify(frame), "utf8");
+              }
               if (!isAdmin) {
                 const allow = allowlistFor(login);
                 if (allow) {
@@ -361,7 +392,7 @@ app.prepare().then(() => {
                 }
               }
             } else if (frame.type === "set_model_ack" && frame.ok) {
-              const mdl = String(frame.model || "");
+              const mdl = normModelKey(String(frame.model || ""));
               if (mdl.includes("/")) chatModels.set(String(frame.chat_id), mdl);
             } else if (frame.type === "artifact") {
               // артефакт агента: url — host-путь файла. Копируем в стор + реестр,

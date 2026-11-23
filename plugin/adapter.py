@@ -582,7 +582,7 @@ class GTWAdapter(BasePlatformAdapter):
         for r in rows or []:
             name = str(r.get("name") or r.get("slug") or "")
             if name:
-                providers.append({"name": name,
+                providers.append({"name": name, "slug": str(r.get("slug") or ""),
                                   "models": [str(x) for x in (r.get("models") or [])][:100]})
         return providers, cur
 
@@ -602,9 +602,12 @@ class GTWAdapter(BasePlatformAdapter):
                     result = await asyncio.wait_for(result, timeout=15)
                 for p in result or []:
                     name = str(getattr(p, "name", None) or (p.get("name") if isinstance(p, dict) else "") or "")
+                    slug = str(getattr(p, "slug", None) or (p.get("slug") if isinstance(p, dict) else "") or "")
                     models = getattr(p, "models", None) or (p.get("models") if isinstance(p, dict) else None) or []
                     if name:
-                        providers.append({"name": name, "models": [str(m) for m in models][:100]})
+                        # slug — для карты slug→display в GTW-прокси (гейт моделей):
+                        # session_info/current несут slug, каталог и белый список — display.
+                        providers.append({"name": name, "slug": slug, "models": [str(m) for m in models][:100]})
             except Exception as e:
                 logger.warning("GTW: model catalog unavailable: %s", e)
         # Запасной путь: прямой каталог из config — работает и без runner-контекста.

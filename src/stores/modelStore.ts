@@ -50,6 +50,8 @@ export const useModelStore = create<ModelState>((set) => ({
 }));
 
 if (typeof window !== "undefined") {
+  // B1: чаты, где уже пробовали авто-выбор разрешённой модели (защита от цикла).
+  const autoSwitchTried = new Set<string>();
   gtwSocket.onFrame((frame: GtwServerFrame) => {
     if (frame.type === "models") {
       useModelStore.setState((s) => {
@@ -66,6 +68,20 @@ if (typeof window !== "undefined") {
           },
         };
       });
+      // B1: новый чат ограниченного пользователя показывает модель профиля по умолчанию
+      // (напр. qwen3.8), которая может быть НЕ в белом списке. Авто-выбираем первую
+      // разрешённую, чтобы агент работал на доступной модели, а не блокировался гейтом.
+      const st = useModelStore.getState();
+      const cat = st.catalogByChat[frame.chat_id];
+      if (cat && cat.restricted && cat.current && !st.switchingByChat[frame.chat_id]) {
+        const allowed = cat.providers.flatMap((p) => (p.models || []).map((m) => `${p.name}/${m}`));
+        const curKey = `${cat.current.provider}/${cat.current.model}`;
+        const triedKey = `${frame.chat_id}:${curKey}`;
+        if (allowed.length && !allowed.includes(curKey) && !autoSwitchTried.has(triedKey)) {
+          autoSwitchTried.add(triedKey);
+          st.setModel(frame.chat_id, allowed[0]);
+        }
+      }
     } else if (frame.type === "set_model_ack") {
       useModelStore.setState((s) => {
         const { [frame.chat_id]: _drop, ...restSwitch } = s.switchingByChat;
