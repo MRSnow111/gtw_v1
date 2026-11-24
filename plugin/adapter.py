@@ -125,6 +125,36 @@ class GTWAdapter(BasePlatformAdapter):
         from hermes_constants import get_hermes_home
         return Path(get_hermes_home()) / "profiles"
 
+    def _sandbox_home(self, user_id: str, role: str) -> Path:
+        """Host-каталог, который песочница профиля видит как /root.
+
+        Docker-терминал (home_mode=auto) bind-монтирует /root из persistent-каталога
+        <profile>/sandboxes/docker/profile_<name>-<hash>/home (ядро:
+        get_sandbox_dir()/docker/_sandbox_dir_name(task_id)/home), а НЕ из <profile>/home.
+        Для default-профиля каталог — литерал 'default'. Резолвим glob'ом по имени профиля
+        (без правки ядра, устойчиво к смене хэша при смене образа — берём свежайший);
+        fallback <profile>/home — для local-режима/ещё не созданной песочницы.
+        """
+        from hermes_constants import get_hermes_home
+        override = os.getenv("TERMINAL_SANDBOX_DIR")
+        if role == "admin" or user_id in self._admin_logins:
+            root = Path(get_hermes_home())
+            sandboxes = Path(override) if override else root / "sandboxes"
+            cand = sandboxes / "docker" / "default" / "home"
+            return cand if cand.is_dir() else root / "home"
+        name = self._user_profile_name(user_id)
+        profile_dir = self._profiles_dir() / name
+        sandboxes = Path(override) if override else profile_dir / "sandboxes"
+        docker_base = sandboxes / "docker"
+        try:
+            homes = [p / "home" for p in docker_base.glob(f"profile_{name}-*")
+                     if (p / "home").is_dir()]
+            if homes:
+                return max(homes, key=lambda p: p.stat().st_mtime)
+        except Exception:
+            pass
+        return profile_dir / "home"
+
     def _read_served(self) -> set:
         try:
             from hermes_constants import get_hermes_home
@@ -711,11 +741,7 @@ class GTWAdapter(BasePlatformAdapter):
             return ""
         sandbox_dir = f"/root/projects/{slug}"
         try:
-            from hermes_constants import get_hermes_home
-            if role == "admin" or user_id in self._admin_logins:
-                home = Path(get_hermes_home()) / "home"
-            else:
-                home = self._profiles_dir() / self._user_profile_name(user_id) / "home"
+            home = self._sandbox_home(user_id, role)
             host_dir = home / "projects" / slug
             host_dir.mkdir(parents=True, exist_ok=True)
             for pf in (frame.get("project_files") or [])[:50]:
