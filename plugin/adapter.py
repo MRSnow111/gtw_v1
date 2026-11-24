@@ -155,6 +155,37 @@ class GTWAdapter(BasePlatformAdapter):
             pass
         return profile_dir / "home"
 
+    def _project_files_via_docker(self, user_id: str, slug: str, files: list) -> None:
+        """Fallback-провизион файлов проекта в работающий контейнер профиля (docker cp).
+
+        Вызывается, когда host-запись в sandbox-home упала с PermissionError (каталог
+        принадлежит root — его создал агент контейнера). docker cp пишет от root внутрь
+        контейнера, поэтому агент видит файлы в /root/projects/<slug> с корректными правами.
+        Контейнер ищем по label hermes-profile=gtw-<login>; нет контейнера — тихо выходим.
+        """
+        import subprocess
+        try:
+            label = self._user_profile_name(user_id)
+            r = subprocess.run(
+                ["docker", "ps", "-q", "--filter", f"label=hermes-profile={label}"],
+                capture_output=True, text=True, timeout=15)
+            cid = (r.stdout or "").strip().split("\n")[0].strip()
+            if not cid:
+                return
+            dest_dir = f"/root/projects/{slug}"
+            subprocess.run(["docker", "exec", cid, "mkdir", "-p", dest_dir],
+                           capture_output=True, timeout=15)
+            for pf in (files or [])[:50]:
+                if not isinstance(pf, dict):
+                    continue
+                src = str(pf.get("storage_path") or "")
+                fname = re.sub(r"[^\w.\-]", "_", str(pf.get("name") or "file"))[:120] or "file"
+                if src and os.path.isfile(src):
+                    subprocess.run(["docker", "cp", src, f"{cid}:{dest_dir}/{fname}"],
+                                   capture_output=True, timeout=30)
+        except Exception:
+            logger.debug("GTW: docker project provision failed", exc_info=True)
+
     def _read_served(self) -> set:
         try:
             from hermes_constants import get_hermes_home
@@ -754,6 +785,11 @@ class GTWAdapter(BasePlatformAdapter):
                         shutil.copyfile(src, str(host_dir / fname))
                     except Exception:
                         pass
+        except PermissionError:
+            # sandbox-home принадлежит root (каталог создал агент контейнера), host-процесс
+            # адаптера (hermes) писать туда не вправе. Доставляем файлы прямо в работающий
+            # контейнер профиля через docker cp (пишет root — корректные права для агента).
+            self._project_files_via_docker(user_id, slug, frame.get("project_files") or [])
         except Exception:
             logger.debug("GTW: project dir provision failed", exc_info=True)
         files = frame.get("project_files") or []
