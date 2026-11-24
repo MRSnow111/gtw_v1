@@ -15,8 +15,20 @@ import argparse
 import asyncio
 import os
 import pathlib
+import re
 import sys
 import uuid
+
+# Tool-progress уведомления (💻 Running …, 🔧 …) приходят как message-кадры во время
+# хода — это НЕ финальный ответ. Не запускаем по ним таймер тишины, иначе пробник
+# обрывает ход на паузе между инструментами и не видит финал/артефакты.
+_TOOL_PROGRESS = re.compile(
+    r"^\s*(?:💻|🔧|🛠|📁|📂|🌐|🔍|🔎|📄|📝|⚙|🖥|📦|🧰|🗑|✏|📋|🧪|🚀|💾|📥|📤|🔨|📡)\uFE0F?\s"
+)
+
+
+def _is_tool_progress(content: str) -> bool:
+    return bool(_TOOL_PROGRESS.match(content or ""))
 
 
 def read_token() -> str:
@@ -105,15 +117,16 @@ async def run(args) -> int:
             deadline = loop.time() + args.timeout
             finals: list[str] = []
             last_final = None
-            n_typing = n_draft = n_edit = 0
+            n_typing = n_draft = n_edit = n_progress = n_artifact = 0
+            artifacts: list[dict] = []
             while True:
                 now = loop.time()
                 if now > deadline:
                     print(f"ОШИБКА: таймаут {args.timeout}с — финальный ответ не пришёл.")
                     print("Смотрите лог: journalctl --user -u hermes-gateway -n 100 --no-pager")
                     return 1
-                if last_final is not None and now - last_final > 3:
-                    break  # 3с тишины после финала — ход завершён
+                if last_final is not None and now - last_final > 10:
+                    break  # 10с тишины после финала/артефакта — ход завершён
                 wait = 1.0 if last_final is not None else min(deadline - now, 30.0)
                 try:
                     frame = await asyncio.wait_for(ws.receive_json(), wait)
@@ -130,11 +143,19 @@ async def run(args) -> int:
                 elif t == "message_edit":
                     n_edit += 1
                     if frame.get("finalize"):
-                        finals.append(str(frame.get("content", "")))
-                        last_final = loop.time()
+                        content = str(frame.get("content", ""))
+                        if _is_tool_progress(content):
+                            n_progress += 1
+                        else:
+                            finals.append(content)
+                            last_final = loop.time()
                 elif t == "message":
-                    finals.append(str(frame.get("content", "")))
-                    last_final = loop.time()
+                    content = str(frame.get("content", ""))
+                    if _is_tool_progress(content):
+                        n_progress += 1  # tool-прогресс: не финал, не запускаем таймер
+                    else:
+                        finals.append(content)
+                        last_final = loop.time()
                 elif t == "approval_request":
                     print("  ! агент запросил approval — пробник отклоняет (deny):")
                     print(f"    команда: {frame.get('command')}")
@@ -150,15 +171,23 @@ async def run(args) -> int:
                                         "clarify_id": frame.get("clarify_id"),
                                         "response": resp})
                 elif t == "artifact":
-                    print(f"  артефакт: {frame.get('kind')} {frame.get('url')}")
+                    n_artifact += 1
+                    artifacts.append(frame)
+                    print(f"  артефакт: {frame.get('kind')} {frame.get('name')} mime={frame.get('mime')} url={frame.get('url')}")
+                    last_final = loop.time()  # ждём ещё 10с — вдруг будут ещё кадры
                 elif t == "error":
                     print(f"  ошибка адаптера: {frame.get('error')}")
 
-            if not finals:
-                print("ОШИБКА: ход завершился без финального сообщения.")
+            if not finals and not artifacts:
+                print("ОШИБКА: ход завершился без финального сообщения и без артефактов.")
                 return 1
-            print(f"[4/4] ответ агента:\n{'-' * 60}\n{finals[-1]}\n{'-' * 60}")
-            print(f"статистика хода: typing={n_typing}, draft-кадров={n_draft}, edit={n_edit}")
+            if finals:
+                print(f"[4/4] ответ агента:\n{'-' * 60}\n{finals[-1]}\n{'-' * 60}")
+            print(f"статистика хода: typing={n_typing}, draft={n_draft}, edit={n_edit}, tool-прогресс={n_progress}, артефактов={n_artifact}")
+            if artifacts:
+                print(f"АРТЕФАКТЫ ДОСТАВЛЕНЫ ({n_artifact}): " + "; ".join(f"{a.get('kind')}:{a.get('name')}" for a in artifacts))
+            else:
+                print("артефактов нет (агент не отдал файл через MEDIA)")
 
             # бонус: история чата
             await ws.send_json({"type": "history", "chat_id": args.chat})
