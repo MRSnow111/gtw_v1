@@ -1,9 +1,9 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import { Menu } from "lucide-react";
-import { useUiStore } from "@/stores/uiStore";
+import { useUiStore, loadArtifactWidth } from "@/stores/uiStore";
 import { useAuthStore } from "@/stores/authStore";
 import { useLiveStore } from "@/stores/liveStore";
 import { useWebSocket } from "@/hooks/useWebSocket";
@@ -17,12 +17,41 @@ import { cn } from "@/lib/utils";
  * ≥1280px — артефакты видны; <768px — сайдбар в виде drawer.
  */
 export function AppShell({ children }: { children: React.ReactNode }) {
-  const { drawerOpen, setDrawerOpen } = useUiStore();
+  const { drawerOpen, setDrawerOpen, artifactWidth, setArtifactWidth } = useUiStore();
   const [mounted, setMounted] = useState(false);
+  const resizeRef = useRef<{ startX: number; startW: number } | null>(null);
   const user = useAuthStore((s) => s.user);
   useWebSocket(); // держит WS-соединение с прокси /ws (live-режим)
 
   useEffect(() => setMounted(true), []);
+
+  // сохранённая ширина панели артефактов — применяем после маунта (без SSR-рассинхрона)
+  useEffect(() => {
+    const saved = loadArtifactWidth();
+    if (saved) setArtifactWidth(saved);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // перетаскивание левого края панели: ширина = стартовая + (стартовый X − текущий X)
+  const startResize = (e: React.PointerEvent) => {
+    e.preventDefault();
+    resizeRef.current = { startX: e.clientX, startW: useUiStore.getState().artifactWidth };
+    const onMove = (ev: PointerEvent) => {
+      const st = resizeRef.current;
+      if (st) setArtifactWidth(st.startW + (st.startX - ev.clientX));
+    };
+    const onUp = () => {
+      resizeRef.current = null;
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+      document.body.style.userSelect = "";
+      document.body.style.cursor = "";
+    };
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+    document.body.style.userSelect = "none";
+    document.body.style.cursor = "col-resize";
+  };
 
   // Список чатов — с сервера per-login: при входе/смене аккаунта грузим свой,
   // при выходе очищаем (изоляция между аккаунтами + синхронизация устройств).
@@ -77,13 +106,24 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         {children}
       </motion.main>
 
-      {/* артефакты — только ≥1280px */}
+      {/* артефакты — только ≥1280px; ширина регулируется перетаскиванием левого края */}
       <motion.aside
         initial={{ opacity: 0, x: 16 }}
         animate={{ opacity: 1, x: 0 }}
         transition={{ duration: 0.4, ease: [0.22, 1, 0.36, 1], delay: 0.08 }}
-        className="hidden w-[276px] shrink-0 xl:block"
+        style={{ width: artifactWidth }}
+        className="relative hidden shrink-0 xl:block"
       >
+        <div
+          onPointerDown={startResize}
+          role="separator"
+          aria-orientation="vertical"
+          aria-label="Изменить ширину панели артефактов"
+          title="Потяните, чтобы изменить ширину панели"
+          className="group absolute -left-2 top-0 z-20 flex h-full w-4 cursor-col-resize items-center justify-center"
+        >
+          <div className="h-16 w-1 rounded-full bg-white/10 transition-colors group-hover:bg-mint/50 group-active:bg-mint" />
+        </div>
         <ArtifactPanel className="rounded-[28px] glass-edge" />
       </motion.aside>
 

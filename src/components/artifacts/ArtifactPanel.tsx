@@ -5,11 +5,13 @@ import { AnimatePresence, motion } from "framer-motion";
 import {
   ArrowLeft, Check, Copy, Download, FileCode2, FileText, Folder, Inbox,
   Image as ImageIcon, TriangleAlert, X, Maximize2, Presentation, Loader2, Upload,
+  PanelRightClose, PanelRightOpen,
 } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { useAgentStore } from "@/stores/agentStore";
 import { useProjectStore } from "@/stores/projectStore";
+import { useUiStore, ARTIFACT_DEFAULT_WIDTH, ARTIFACT_WIDE_WIDTH } from "@/stores/uiStore";
 import type { Artifact } from "@/lib/demoData";
 import { formatSize } from "@/lib/demoData";
 import { detectKind } from "@/lib/fileKind";
@@ -293,6 +295,9 @@ function FileBody({
 export function ArtifactPanel({ className }: { className?: string }) {
   const { artifacts, activeChatId, retryArtifact, sendMessage, chats } = useAgentStore();
   const projects = useProjectStore((s) => s.projects);
+  const artifactWidth = useUiStore((s) => s.artifactWidth);
+  const toggleArtifactWide = useUiStore((s) => s.toggleArtifactWide);
+  const isWide = artifactWidth >= (ARTIFACT_DEFAULT_WIDTH + ARTIFACT_WIDE_WIDTH) / 2;
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [lightbox, setLightbox] = useState(false);
   const [viewerOpen, setViewerOpen] = useState(false);
@@ -427,12 +432,24 @@ export function ArtifactPanel({ className }: { className?: string }) {
     <div className={cn("glass-strong relative flex h-full flex-col overflow-hidden", className)}>
       {/* шапка */}
       <div className="flex items-center gap-2 px-4 pb-2 pt-4">
+        <div className="flex min-w-0 flex-1 items-center gap-2">
         {selected ? (
           <>
             <IconButton onClick={() => setSelectedId(null)} aria-label="Назад">
               <ArrowLeft className="h-4 w-4" />
             </IconButton>
             <span className="min-w-0 flex-1 truncate text-[12px] text-dim">{selected.name}</span>
+            {dlUrl(selected) && (
+              <a
+                href={dlUrl(selected)}
+                download={selected.name}
+                aria-label="Скачать файл"
+                title="Скачать файл"
+                className="glass-light inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-dim transition-all duration-200 hover:border-mint/40 hover:text-foreground hover:shadow-[0_0_16px_rgba(143,184,174,0.2)] active:scale-95"
+              >
+                <Download className="h-4 w-4" />
+              </a>
+            )}
             <IconButton onClick={() => setViewerOpen(true)} aria-label="Открыть">
               <Maximize2 className="h-4 w-4" />
             </IconButton>
@@ -485,6 +502,14 @@ export function ArtifactPanel({ className }: { className?: string }) {
             <GlassBadge>{list.length}</GlassBadge>
           </>
         )}
+        </div>
+        <IconButton
+          onClick={toggleArtifactWide}
+          aria-label={isWide ? "Сузить панель" : "Расширить панель"}
+          title={isWide ? "Сузить панель артефактов" : "Расширить панель артефактов"}
+        >
+          {isWide ? <PanelRightClose className="h-4 w-4" /> : <PanelRightOpen className="h-4 w-4" />}
+        </IconButton>
       </div>
 
       {selected ? (
@@ -510,27 +535,43 @@ export function ArtifactPanel({ className }: { className?: string }) {
           {list.map((a) => {
             const Icon = kindIcon(a);
             return (
-              <button
+              <div
                 key={a.id}
-                onClick={() => setSelectedId(a.id)}
-                className="group mb-0.5 flex w-full items-center gap-2.5 rounded-xl px-3 py-2.5 text-left transition-colors hover:bg-white/[0.05]"
+                className="group mb-0.5 flex w-full items-center gap-1 rounded-xl pr-1.5 transition-colors hover:bg-white/[0.05]"
               >
-                <div className="glass-light flex h-8 w-8 shrink-0 items-center justify-center rounded-lg">
-                  <Icon className="h-4 w-4 text-mint" />
-                </div>
-                <div className="min-w-0 flex-1">
-                  <div className="flex items-center gap-1.5">
-                    <span className="truncate text-[13px] text-dim group-hover:text-foreground">
-                      {a.name}
-                    </span>
-                    {a.error && <TriangleAlert className="h-3 w-3 shrink-0 text-amber-300" />}
+                <button
+                  onClick={() => setSelectedId(a.id)}
+                  className="flex min-w-0 flex-1 items-center gap-2.5 rounded-xl px-3 py-2.5 text-left"
+                >
+                  <div className="glass-light flex h-8 w-8 shrink-0 items-center justify-center rounded-lg">
+                    <Icon className="h-4 w-4 text-mint" />
                   </div>
-                  <div className="text-[11px] text-[rgba(220,235,230,0.6)]">
-                    {a.size ? `${a.size} · ` : ""}
-                    {new Date(a.updatedAt).toLocaleTimeString("ru", { hour: "2-digit", minute: "2-digit" })}
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-1.5">
+                      <span className="truncate text-[13px] text-dim group-hover:text-foreground">
+                        {a.name}
+                      </span>
+                      {a.error && <TriangleAlert className="h-3 w-3 shrink-0 text-amber-300" />}
+                    </div>
+                    <div className="text-[11px] text-[rgba(220,235,230,0.6)]">
+                      {a.size ? `${a.size} · ` : ""}
+                      {new Date(a.updatedAt).toLocaleTimeString("ru", { hour: "2-digit", minute: "2-digit" })}
+                    </div>
                   </div>
-                </div>
-              </button>
+                </button>
+                {dlUrl(a) && (
+                  <a
+                    href={dlUrl(a)}
+                    download={a.name}
+                    onClick={(e) => e.stopPropagation()}
+                    aria-label={`Скачать ${a.name}`}
+                    title="Скачать файл"
+                    className="glass-light flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-dim opacity-0 transition-all hover:text-foreground focus:opacity-100 group-hover:opacity-100"
+                  >
+                    <Download className="h-3.5 w-3.5" />
+                  </a>
+                )}
+              </div>
             );
           })}
         </div>
