@@ -1114,9 +1114,15 @@ def register(ctx):
         emoji="🌲",
         pii_safe=True,
         platform_hint=(
-            "You are chatting via GTW, a web chat UI. It renders full markdown "
-            "(code blocks, tables, lists). Approval and clarify questions appear "
-            "as interactive cards with buttons. Long responses are fine."
+            "You are chatting via GTW, a web chat UI with an artifact preview panel. "
+            "It renders full markdown (code blocks, tables, lists); approval and clarify "
+            "questions appear as interactive cards with buttons. "
+            "FILE DELIVERY: when you create a file the user wants to see or download "
+            "(markdown, HTML, code, PDF, Office documents, images, archives), deliver it "
+            "by adding a line `MEDIA:/absolute/path/to/file.ext` with the real path where "
+            "you saved it — GTW then opens it in the preview panel automatically. Do NOT "
+            "paste the file's full content into the chat when a file was requested; give a "
+            "brief summary and the MEDIA line instead. Long text responses are fine otherwise."
         ),
     )
     # Feature-detect: older cores reject unknown register_platform kwargs.
