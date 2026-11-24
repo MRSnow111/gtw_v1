@@ -55,7 +55,8 @@ export type GtwClientFrame =
   | { type: "session_info"; chat_id: string }
   | { type: "sessions" }
   | { type: "models"; chat_id: string }
-  | { type: "set_model"; chat_id: string; model: string };
+  | { type: "set_model"; chat_id: string; model: string }
+  | { type: "browser_live"; chat_id: string; action: "start" | "stop"; user_id?: string };
 
 export type GtwServerFrame =
   | { type: "hello" }
@@ -90,4 +91,6 @@ export type GtwServerFrame =
   | { type: "set_model_ack"; chat_id: string; model: string; ok: boolean }
   | { type: "status"; chat_id: string; status_key?: string; content: string; metadata?: Record<string, unknown> }
   | { type: "quota"; login: string; limit: number | null; used: number }
+  | { type: "browser_frame"; chat_id: string; data: string; url?: string; ts: number; width?: number; height?: number }
+  | { type: "browser_live_ack"; chat_id: string; active: boolean; error?: string }
   | { type: "error"; error: string; limit?: number; used?: number; model?: string; reason?: string };

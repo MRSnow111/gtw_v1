@@ -767,6 +767,19 @@ app.prepare().then(() => {
         if (owner) chatOwners.set(chatId, owner);
         return raw;
       }
+      if (type === "browser_live") {
+        // Live-просмотр браузера агента: только владелец чата или админ.
+        const chatId = String(frame.chat_id || "main");
+        const owner = chatOwnerLogin(chatId);
+        if (!isAdmin && owner && owner !== login) {
+          sendToClient({ type: "error", error: "forbidden" });
+          return null;
+        }
+        const parsed = JSON.parse(raw);
+        parsed.user_id = login; // login из подписанной куки, не из клиента
+        parsed.user_name = login;
+        return JSON.stringify(parsed);
+      }
       return raw;
     }
 

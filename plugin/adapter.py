@@ -102,6 +102,10 @@ class GTWAdapter(BasePlatformAdapter):
         self._prov_guard = threading.Lock()
         self._persist_lock = threading.Lock()
         self._multiplex_cache: Optional[bool] = None
+        # ── live-просмотр браузера агента (CDP screencast) ──
+        self._live_viewers: dict = {}   # ws -> chat_id (кто смотрит live)
+        self._live_task = None          # asyncio.Task продюсера кадров
+        self._live_url: str = ""        # текущий URL страницы браузера
 
     # ── маршрутизация пользователя в его профиль Hermes ──────────────────────
 
@@ -578,6 +582,9 @@ class GTWAdapter(BasePlatformAdapter):
                     break
         finally:
             self._sockets.discard(ws)
+            self._live_viewers.pop(ws, None)
+            if not self._live_viewers and self._live_task and not self._live_task.done():
+                self._live_task.cancel()
             logger.info("GTW: client disconnected (%d left)", len(self._sockets))
         return ws
 
@@ -612,8 +619,161 @@ class GTWAdapter(BasePlatformAdapter):
             await self._send_models(ws, frame)
         elif kind == "set_model":
             await self._set_model(ws, frame)
+        elif kind == "browser_live":
+            await self._browser_live(ws, frame)
         else:
             await ws.send_json({"type": "error", "error": f"unknown_type:{kind}"})
+
+    # ── live-просмотр браузера агента (CDP screencast) ──────────────────────
+
+    async def _browser_cdp_url(self) -> str:
+        """WS-эндпоинт CDP страницы браузерного агента.
+        GTW_BROWSER_CDP — явный ws://host/devtools/page/<id>. Иначе авто-поиск:
+        GTW_BROWSER_DEBUG_PORT или DevToolsActivePort в GTW_BROWSER_PROFILE →
+        http://127.0.0.1:<port>/json/list → первый page-таргет."""
+        import os
+        explicit = os.environ.get("GTW_BROWSER_CDP", "").strip()
+        if explicit:
+            return explicit
+        port = os.environ.get("GTW_BROWSER_DEBUG_PORT", "").strip()
+        if not port:
+            prof = os.environ.get("GTW_BROWSER_PROFILE", "").strip()
+            if prof:
+                try:
+                    port = (Path(prof) / "DevToolsActivePort").read_text().splitlines()[0].strip()
+                except Exception:
+                    port = ""
+        if not port:
+            return ""
+        try:
+            import aiohttp
+            async with aiohttp.ClientSession() as sess:
+                async with sess.get(f"http://127.0.0.1:{port}/json/list",
+                                    timeout=aiohttp.ClientTimeout(total=5)) as r:
+                    targets = await r.json()
+            for t in targets or []:
+                if t.get("type") == "page" and t.get("webSocketDebuggerUrl"):
+                    return str(t["webSocketDebuggerUrl"])
+        except Exception as e:
+            logger.warning("GTW live: CDP discover failed: %s", e)
+        return ""
+
+    async def _send_live(self, payload: dict) -> None:
+        """Кадр live только зарегистрированным зрителям (не всем сокетам)."""
+        import json
+        if not self._live_viewers:
+            return
+        data = json.dumps(payload, ensure_ascii=False)
+        for ws in list(self._live_viewers):
+            try:
+                await ws.send_str(data)
+            except Exception:
+                self._live_viewers.pop(ws, None)
+
+    async def _browser_live(self, ws, frame: dict) -> None:
+        action = str(frame.get("action") or "start")
+        chat_id = str(frame.get("chat_id") or "main")
+        if action == "stop":
+            self._live_viewers.pop(ws, None)
+            with contextlib.suppress(Exception):
+                await ws.send_json({"type": "browser_live_ack", "chat_id": chat_id, "active": False})
+            if not self._live_viewers and self._live_task and not self._live_task.done():
+                self._live_task.cancel()
+            return
+        self._live_viewers[ws] = chat_id
+        if not self._live_task or self._live_task.done():
+            self._live_task = asyncio.create_task(self._live_producer())
+        with contextlib.suppress(Exception):
+            await ws.send_json({"type": "browser_live_ack", "chat_id": chat_id, "active": True})
+
+    async def _live_producer(self) -> None:
+        """Подключается к CDP браузера, Page.startScreencast → browser_frame зрителям."""
+        import time
+        import aiohttp
+        url = await self._browser_cdp_url()
+        if not url:
+            logger.warning("GTW live: no CDP endpoint (set GTW_BROWSER_CDP / GTW_BROWSER_DEBUG_PORT)")
+            await self._send_live({"type": "browser_live_ack", "chat_id": "", "active": False, "error": "no_cdp"})
+            self._live_task = None
+            return
+        msg_id = 0
+
+        def nxt() -> int:
+            nonlocal msg_id
+            msg_id += 1
+            return msg_id
+
+        try:
+            async with aiohttp.ClientSession() as sess:
+                async with sess.ws_connect(url, max_msg_size=32 * 1024 * 1024, heartbeat=30) as cdp:
+                    async def call(method, params=None):
+                        nonlocal msg_id
+                        msg_id += 1
+                        mid = msg_id
+                        await cdp.send_json({"id": mid, "method": method, "params": params or {}})
+                        while True:
+                            m = await cdp.receive()
+                            if m.type != aiohttp.WSMsgType.TEXT:
+                                continue
+                            f = m.json()
+                            if f.get("id") == mid:
+                                return f.get("result") or {}
+
+                    await call("Page.enable")
+                    # текущий URL до старта потока: страница уже загружена, frameNavigated
+                    # для неё не придёт — берём из истории навигации
+                    with contextlib.suppress(Exception):
+                        hist = await call("Page.getNavigationHistory")
+                        entries = hist.get("entries") or []
+                        idx = hist.get("currentIndex", 0)
+                        if 0 <= idx < len(entries):
+                            self._live_url = str(entries[idx].get("url") or "")
+                    await cdp.send_json({"id": nxt(), "method": "Page.startScreencast",
+                                         "params": {"format": "jpeg", "quality": 60,
+                                                    "maxWidth": 1280, "maxHeight": 800, "everyNthFrame": 1}})
+                    # начальный кадр сразу: screencast шлёт кадры только при изменениях страницы
+                    with contextlib.suppress(Exception):
+                        await cdp.send_json({"id": nxt(), "method": "Page.captureScreenshot",
+                                             "params": {"format": "jpeg", "quality": 60}})
+                    async for msg in cdp:
+                        if not self._live_viewers:
+                            break
+                        if msg.type != aiohttp.WSMsgType.TEXT:
+                            continue
+                        f = msg.json()
+                        m = f.get("method")
+                        if m == "Page.frameNavigated":
+                            fr = (f.get("params") or {}).get("frame") or {}
+                            if not fr.get("parentId"):
+                                self._live_url = str(fr.get("url") or "")
+                        elif m == "Page.screencastFrame":
+                            p = f.get("params") or {}
+                            sid = p.get("sessionId")
+                            with contextlib.suppress(Exception):
+                                await cdp.send_json({"id": nxt(), "method": "Page.screencastFrameAck",
+                                                     "params": {"sessionId": sid}})
+                            meta = p.get("metadata") or {}
+                            await self._send_live({"type": "browser_frame", "chat_id": "",
+                                                   "data": p.get("data", ""), "url": self._live_url,
+                                                   "ts": int(time.time() * 1000),
+                                                   "width": meta.get("deviceWidth"),
+                                                   "height": meta.get("deviceHeight")})
+                        else:
+                            res = f.get("result") or {}
+                            if isinstance(res, dict) and res.get("data"):
+                                await self._send_live({"type": "browser_frame", "chat_id": "",
+                                                       "data": res["data"], "url": self._live_url,
+                                                       "ts": int(time.time() * 1000)})
+                    with contextlib.suppress(Exception):
+                        await cdp.send_json({"id": nxt(), "method": "Page.stopScreencast"})
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            logger.warning("GTW live producer error: %s", e)
+            await self._send_live({"type": "browser_live_ack", "chat_id": "", "active": False, "error": "cdp_disconnected"})
+        finally:
+            self._live_task = None
+            await self._send_live({"type": "browser_live_ack", "chat_id": "", "active": False})
 
     def _catalog_direct(self) -> tuple[list, dict]:
         """Запасной каталог напрямую через list_picker_providers + config.

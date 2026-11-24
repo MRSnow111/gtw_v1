@@ -5,7 +5,7 @@ import { AnimatePresence, motion } from "framer-motion";
 import {
   ArrowLeft, Check, Copy, Download, FileCode2, FileText, Folder, Inbox,
   Image as ImageIcon, TriangleAlert, X, Maximize2, Presentation, Loader2, Upload,
-  PanelRightClose, PanelRightOpen, Trash2,
+  PanelRightClose, PanelRightOpen, Trash2, Monitor,
 } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
@@ -18,6 +18,7 @@ import { detectKind } from "@/lib/fileKind";
 import { GlassBadge, IconButton } from "@/components/ui/glass";
 import { Markdown } from "@/lib/markdown";
 import { OfficeViewer } from "@/components/artifacts/OfficeViewer";
+import { LiveBrowser } from "@/components/artifacts/LiveBrowser";
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 
 /* ─────────── простая подсветка синтаксиса (без зависимостей) ─────────── */
@@ -272,6 +273,7 @@ export function ArtifactPanel({ className }: { className?: string }) {
   const [lightbox, setLightbox] = useState(false);
   const [viewerOpen, setViewerOpen] = useState(false);
   const [tab, setTab] = useState<"artifacts" | "project">("artifacts");
+  const [liveOpen, setLiveOpen] = useState(false);
   const [projectFiles, setProjectFiles] = useState<Artifact[]>([]);
   const [loadingFiles, setLoadingFiles] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -512,6 +514,14 @@ export function ArtifactPanel({ className }: { className?: string }) {
         )}
         </div>
         <IconButton
+          onClick={() => setLiveOpen((v) => !v)}
+          active={liveOpen}
+          aria-label={liveOpen ? "Закрыть браузер" : "Браузер агента (live)"}
+          title={liveOpen ? "Закрыть live-браузер" : "Браузер агента (live)"}
+        >
+          <Monitor className="h-4 w-4" />
+        </IconButton>
+        <IconButton
           onClick={toggleArtifactWide}
           aria-label={isWide ? "Сузить панель" : "Расширить панель"}
           title={isWide ? "Сузить панель артефактов" : "Расширить панель артефактов"}
@@ -520,7 +530,9 @@ export function ArtifactPanel({ className }: { className?: string }) {
         </IconButton>
       </div>
 
-      {selected ? (
+      {liveOpen ? (
+        <LiveBrowser chatId={activeChatId} />
+      ) : selected ? (
         <div className="flex min-h-0 flex-1 flex-col px-3 pb-3">
           <FileBody
             a={selected}
