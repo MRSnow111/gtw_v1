@@ -9,6 +9,7 @@ import type { DemoState } from "@/stores/demoStore";
 import { gtwSocket } from "@/lib/gtwSocket";
 import type { ApprovalChoice, GtwServerFrame } from "@/types/events";
 import { useAuthStore } from "@/stores/authStore";
+import { useModelStore } from "@/stores/modelStore";
 
 /**
  * LIVE store — тот же интерфейс, что у demoStore, но ходы строятся из реальных
@@ -403,7 +404,11 @@ export const useLiveStore = create<DemoState>()((set, get) => ({
         gtwSocket.send({ type: "session_info", chat_id: chatId });
       },
 
-      setActiveChat: (id) => set({ activeChatId: id }),
+      setActiveChat: (id) => {
+        // переход к чату сбрасывает черновой выбор модели с welcome-экрана
+        useModelStore.getState().setPendingModel(null);
+        set({ activeChatId: id });
+      },
 
       loadChats: async () => {
         try {
@@ -442,7 +447,7 @@ export const useLiveStore = create<DemoState>()((set, get) => ({
         }, 6000);
       },
 
-      sendMessage: (chatId, text, attachments) => {
+      sendMessage: (chatId, text, attachments, initialModel) => {
         const userTurn: Turn = {
           id: uid("tu"), kind: "user", createdAt: Date.now(), text,
           attachments: attachments?.length ? attachments : undefined, status: "done",
@@ -475,6 +480,8 @@ export const useLiveStore = create<DemoState>()((set, get) => ({
           message_id: uid("m"),
           user_id: userId(),
           user_name: userId(),
+          // модель, выбранная до начала чата: server.js применит её к первому ходу
+          ...(initialModel ? { model: initialModel } : {}),
           ...(ready.length
             ? { attachments: ready.map((a) => ({ fileId: a.fileId as string, name: a.name, mime: a.mime, size: a.sizeBytes })) }
             : {}),
@@ -483,7 +490,10 @@ export const useLiveStore = create<DemoState>()((set, get) => ({
 
       startChatWithMessage: (text, attachments) => {
         const chat = get().createChat();
-        get().sendMessage(chat.id, text, attachments);
+        // pending-модель с welcome-экрана уходит в первый user_message (frame.model)
+        const pending = useModelStore.getState().pendingModel;
+        if (pending) useModelStore.getState().setPendingModel(null);
+        get().sendMessage(chat.id, text, attachments, pending ?? undefined);
         return chat.id;
       },
 

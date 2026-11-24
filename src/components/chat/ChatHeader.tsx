@@ -39,7 +39,7 @@ export function ChatHeader({ title }: { title?: string }) {
         <span className="text-[11.5px] text-dim">{text}</span>
       </div>
       {!DEMO_MODE && <TokenIndicator />}
-      {!DEMO_MODE && activeChatId && <ModelPicker chatId={activeChatId} />}
+      {!DEMO_MODE && <ModelPicker chatId={activeChatId} />}
       <IconButton
         aria-label="Информация о сессии"
         title="Информация о сессии"

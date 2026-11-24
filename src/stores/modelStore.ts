@@ -5,6 +5,10 @@ import { toast } from "sonner";
 import { gtwSocket } from "@/lib/gtwSocket";
 import type { GtwServerFrame, ModelProvider } from "@/types/events";
 
+/** Sentinel-чат для каталога на welcome-экране (до создания реального чата).
+ *  По нему только запрашиваем список моделей — set_model и авто-выбор B1 не делаем. */
+export const DRAFT_CHAT_ID = "__draft__";
+
 /**
  * LIVE-стор пикера моделей в чате. Каталог приходит кадром "models"
  * (для не-админа server.js фильтрует его по белому списку пользователя),
@@ -21,14 +25,18 @@ interface ModelState {
   catalogByChat: Record<string, ModelCatalog>;
   loadingByChat: Record<string, boolean>;
   switchingByChat: Record<string, boolean>;
+  /** Модель, выбранная ДО начала чата (welcome-экран); применится к первому сообщению. */
+  pendingModel: string | null;
   requestModels: (chatId: string) => void;
   setModel: (chatId: string, model: string) => void;
+  setPendingModel: (model: string | null) => void;
 }
 
 export const useModelStore = create<ModelState>((set) => ({
   catalogByChat: {},
   loadingByChat: {},
   switchingByChat: {},
+  pendingModel: null,
 
   requestModels: (chatId) => {
     set((s) => ({ loadingByChat: { ...s.loadingByChat, [chatId]: true } }));
@@ -47,6 +55,8 @@ export const useModelStore = create<ModelState>((set) => ({
     set((s) => ({ switchingByChat: { ...s.switchingByChat, [chatId]: true } }));
     gtwSocket.send({ type: "set_model", chat_id: chatId, model });
   },
+
+  setPendingModel: (model) => set({ pendingModel: model }),
 }));
 
 if (typeof window !== "undefined") {
@@ -73,7 +83,7 @@ if (typeof window !== "undefined") {
       // разрешённую, чтобы агент работал на доступной модели, а не блокировался гейтом.
       const st = useModelStore.getState();
       const cat = st.catalogByChat[frame.chat_id];
-      if (cat && cat.restricted && cat.current && !st.switchingByChat[frame.chat_id]) {
+      if (cat && cat.restricted && cat.current && frame.chat_id !== DRAFT_CHAT_ID && !st.switchingByChat[frame.chat_id]) {
         const allowed = cat.providers.flatMap((p) => (p.models || []).map((m) => `${p.name}/${m}`));
         const curKey = `${cat.current.provider}/${cat.current.model}`;
         const triedKey = `${frame.chat_id}:${curKey}`;

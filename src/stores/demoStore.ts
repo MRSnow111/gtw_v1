@@ -57,7 +57,7 @@ export interface DemoState {
 
   setActiveChat: (id: string | null) => void;
   loadTurns: (chatId: string) => void;
-  sendMessage: (chatId: string, text: string, attachments?: UserAttachment[]) => void;
+  sendMessage: (chatId: string, text: string, attachments?: UserAttachment[], initialModel?: string) => void;
   startChatWithMessage: (text: string, attachments?: UserAttachment[]) => string;
   stop: (chatId: string) => void;
   decide: (chatId: string, turnId: string, approvalId: string, choice: string, comment?: string) => void;

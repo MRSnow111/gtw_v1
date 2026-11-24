@@ -3,35 +3,54 @@
 import { useEffect, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import { Check, Cpu, RefreshCw, X } from "lucide-react";
-import { useModelStore } from "@/stores/modelStore";
+import { useModelStore, DRAFT_CHAT_ID } from "@/stores/modelStore";
 import { useAgentStore } from "@/stores/agentStore";
 
 /**
  * Пикер модели в шапке чата (LIVE). Показывает текущую модель и каталог
  * доступных. Для не-админа server.js отдаёт каталог, отфильтрованный по
  * белому списку пользователя (restricted=true) — лишних моделей не видно.
+ * chatId=null — welcome-экран (чат ещё не создан): выбираем «pending-модель»,
+ * которая применится к первому сообщению; каталог запрашиваем по DRAFT_CHAT_ID.
  */
-export function ModelPicker({ chatId }: { chatId: string }) {
+export function ModelPicker({ chatId }: { chatId: string | null }) {
   const [open, setOpen] = useState(false);
-  const catalog = useModelStore((s) => s.catalogByChat[chatId]);
-  const loading = useModelStore((s) => !!s.loadingByChat[chatId]);
-  const switching = useModelStore((s) => !!s.switchingByChat[chatId]);
+  const isDraft = !chatId;
+  const effectiveId = chatId ?? DRAFT_CHAT_ID;
+  const catalog = useModelStore((s) => s.catalogByChat[effectiveId]);
+  const loading = useModelStore((s) => !!s.loadingByChat[effectiveId]);
+  const switching = useModelStore((s) => !!s.switchingByChat[effectiveId]);
+  const pendingModel = useModelStore((s) => s.pendingModel);
   const requestModels = useModelStore((s) => s.requestModels);
   const setModel = useModelStore((s) => s.setModel);
-  const info = useAgentStore((s) => s.sessionInfoByChat?.[chatId]);
+  const setPendingModel = useModelStore((s) => s.setPendingModel);
+  const info = useAgentStore((s) => s.sessionInfoByChat?.[effectiveId]);
 
-  const currentKey = catalog?.current
-    ? `${catalog.current.provider}/${catalog.current.model}`
-    : info
-      ? `${info.provider}/${info.model}`
-      : "";
-  const currentLabel = catalog?.current?.model || info?.model || "модель";
+  const currentKey = isDraft
+    ? (pendingModel ?? "")
+    : catalog?.current
+      ? `${catalog.current.provider}/${catalog.current.model}`
+      : info
+        ? `${info.provider}/${info.model}`
+        : "";
+  const currentLabel = isDraft
+    ? (pendingModel ? pendingModel.split("/").pop() : "модель")
+    : catalog?.current?.model || info?.model || "модель";
   const providers = catalog?.providers ?? [];
   const hasModels = providers.some((p) => p.models && p.models.length);
 
   useEffect(() => {
-    if (open) requestModels(chatId);
-  }, [open, chatId, requestModels]);
+    if (open) requestModels(effectiveId);
+  }, [open, effectiveId, requestModels]);
+
+  const pick = (key: string) => {
+    if (isDraft) {
+      setPendingModel(key);
+      setOpen(false);
+    } else {
+      setModel(effectiveId, key);
+    }
+  };
 
   return (
     <div className="relative">
@@ -58,7 +77,7 @@ export function ModelPicker({ chatId }: { chatId: string }) {
               <span className="text-[10px] uppercase tracking-wider text-dim">Модель</span>
               <div className="flex items-center gap-1">
                 <button
-                  onClick={() => requestModels(chatId)}
+                  onClick={() => requestModels(effectiveId)}
                   aria-label="Обновить каталог"
                   title="Обновить каталог"
                   className="flex h-6 w-6 items-center justify-center rounded-full text-dim transition-colors hover:bg-white/[0.06] hover:text-mint"
@@ -102,8 +121,8 @@ export function ModelPicker({ chatId }: { chatId: string }) {
                           <button
                             key={key}
                             disabled={switching}
-                            onClick={() => setModel(chatId, key)}
-                            title={isCurrent ? "Текущая модель" : `Переключить на ${key}`}
+                            onClick={() => pick(key)}
+                            title={isCurrent ? (isDraft ? "Выбрана для нового чата" : "Текущая модель") : (isDraft ? `Выбрать ${key}` : `Переключить на ${key}`)}
                             className={`flex items-center gap-1 rounded-xl px-2.5 py-1 text-[11px] transition-all disabled:opacity-50 ${
                               isCurrent
                                 ? "bg-[rgba(143,184,174,0.25)] text-foreground"

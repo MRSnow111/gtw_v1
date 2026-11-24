@@ -526,7 +526,24 @@ app.prepare().then(() => {
           sendToClient({ type: "error", error: "quota_exceeded", limit, used });
           return null;
         }
-        if (!isAdmin) {
+        // Модель, выбранная ДО начала чата (welcome-экран, frame.model): применяем
+        // к первому ходу той же set_model-инъекцией, что и авто-выбор B1 — иначе
+        // B1 (cur пуст у нового чата) перезатрёт выбор пользователя первой разрешённой.
+        const requestedModel = String(frame.model || "").trim();
+        if (requestedModel) {
+          if (!isAdmin && !modelAllowed(allowlistFor(login), requestedModel)) {
+            sendToClient({ type: "error", error: "model_forbidden", model: requestedModel });
+            return null;
+          }
+          chatModels.set(chatId, requestedModel);
+          const sm = JSON.stringify({ type: "set_model", chat_id: chatId, model: requestedModel, user_id: login, user_name: login });
+          if (opened && upstream.readyState === WebSocket.OPEN) {
+            try { upstream.send(sm, { binary: false }); } catch {}
+          } else if (!closed && pending.length < 100) {
+            pending.push({ data: sm, isBinary: false });
+          }
+          delete frame.model;
+        } else if (!isAdmin) {
           const allow = allowlistFor(login);
           const cmd = String(frame.text || "").trim().match(/^\/model(?:@[\w-]+)?\s+(.+)$/i);
           if (cmd) {
