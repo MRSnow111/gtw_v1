@@ -12,6 +12,7 @@ import { cn } from "@/lib/utils";
 import type { Approval, ToolCall, Turn } from "@/lib/demoData";
 import { MarkdownRenderer } from "@/components/chat/MarkdownRenderer";
 import { useAgentStore } from "@/stores/agentStore";
+import { useAuthStore } from "@/stores/authStore";
 
 /* ─────────── ход пользователя ─────────── */
 
@@ -446,9 +447,31 @@ function ThinkingBlock({ turn }: { turn: Turn }) {
   );
 }
 
+/* ─────────── компактный статус для обычных пользователей ───────────
+   Одна статичная строка вместо простыни шагов: меняется на месте в
+   зависимости от текущей фазы («Думает» / «Использует инструмент»),
+   без подробностей и без накопления строк. Видна только пока идёт ход. */
+
+function CompactStatus({ turn }: { turn: Turn }) {
+  if (turn.agentState !== "running") return null;
+  if ((turn.answer || "").length > 0) return null; // ответ пошёл — статус больше не нужен
+  const usingTool = (turn.tools || []).some((t) => t.status === "running");
+  return (
+    <div className="flex items-center gap-2 text-[12px]">
+      <Loader2 className="h-3 w-3 animate-spin text-mint" />
+      <span className="text-[rgba(220,235,230,0.66)]">
+        {usingTool ? "Использует инструмент…" : "Думает…"}
+      </span>
+    </div>
+  );
+}
+
 /* ─────────── ход агента ─────────── */
 
 export function AgentTurn({ turn, chatId }: { turn: Turn; chatId: string }) {
+  const role = useAuthStore((s) => s.user?.role);
+  // обычные пользователи видят краткий статус; admin — полные рассуждения и tool-вызовы
+  const compact = role !== "admin";
   const streaming = turn.agentState === "running";
   const answerShown =
     streaming && turn.revealed !== undefined
@@ -462,16 +485,20 @@ export function AgentTurn({ turn, chatId }: { turn: Turn; chatId: string }) {
       transition={{ duration: 0.25, ease: [0.22, 1, 0.36, 1] }}
       className="group/turn flex flex-col gap-2.5"
     >
-      {/* рассуждения: компактный сворачиваемый блок вместо простыни текста */}
-      <ThinkingBlock turn={turn} />
-
-      {/* tool-вызовы */}
-      {turn.tools && turn.tools.length > 0 && (
-        <div className="flex flex-col gap-1.5">
-          {turn.tools.map((tc) => (
-            <ToolRow key={tc.id} call={tc} />
-          ))}
-        </div>
+      {/* рассуждения и tool-вызовы: admin — подробно, обычный пользователь — одна строка статуса */}
+      {compact ? (
+        <CompactStatus turn={turn} />
+      ) : (
+        <>
+          <ThinkingBlock turn={turn} />
+          {turn.tools && turn.tools.length > 0 && (
+            <div className="flex flex-col gap-1.5">
+              {turn.tools.map((tc) => (
+                <ToolRow key={tc.id} call={tc} />
+              ))}
+            </div>
+          )}
+        </>
       )}
 
       {/* ответ */}
