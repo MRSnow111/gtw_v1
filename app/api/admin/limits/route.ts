@@ -4,7 +4,7 @@
  */
 import { NextRequest, NextResponse } from "next/server";
 import { requireAdmin, getSession } from "@/lib/adminAuth";
-import { allLimits, setLimit, totalTokensForLogin } from "@/lib/usageStore";
+import { allLimits, setLimit, totalTokensForLogin, getResetConfig } from "@/lib/usageStore";
 import { listUsers } from "@/lib/userStore";
 import { logEvent } from "@/lib/activity";
 
@@ -15,12 +15,20 @@ export async function GET(request: NextRequest) {
   if (unauthorized) return unauthorized;
 
   const limits = allLimits();
-  const users = listUsers().map((u) => ({
-    login: u.login,
-    role: u.role,
-    limit: limits[u.login] ?? null,
-    used: totalTokensForLogin(u.login),
-  }));
+  const users = listUsers().map((u) => {
+    const rc = getResetConfig(u.login);
+    return {
+      login: u.login,
+      role: u.role,
+      limit: limits[u.login] ?? null,
+      used: totalTokensForLogin(u.login),
+      resetMode: rc.mode,
+      resetHour: rc.hour,
+      resetDay: rc.day,
+      nextResetAt: rc.nextResetAt,
+      lastResetAt: rc.lastResetAt,
+    };
+  });
   return NextResponse.json({ users });
 }
 

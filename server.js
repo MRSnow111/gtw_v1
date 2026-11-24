@@ -105,21 +105,111 @@ function getDb() {
         db.exec(`ALTER TABLE ${tbl} ADD COLUMN project_id TEXT`);
       }
     }
+    // Сброс расхода: offset + конфиг авто-сброса (синхронно с src/lib/db.ts).
+    const ulCols = db.prepare("PRAGMA table_info(user_limits)").all().map((c) => c.name);
+    const ulAdd = [
+      ["usage_offset", "INTEGER NOT NULL DEFAULT 0"],
+      ["reset_mode", "TEXT NOT NULL DEFAULT 'off'"],
+      ["reset_hour", "INTEGER NOT NULL DEFAULT 0"],
+      ["reset_day", "INTEGER NOT NULL DEFAULT 1"],
+      ["next_reset_at", "TEXT"],
+      ["last_reset_at", "TEXT"],
+    ];
+    for (const [name, decl] of ulAdd) {
+      if (!ulCols.includes(name)) db.exec(`ALTER TABLE user_limits ADD COLUMN ${name} ${decl}`);
+    }
   }
   return db;
+}
+/** Расход логина с учётом offset сброса: used = MAX(0, SUM(tokens) - usage_offset). */
+function usedFor(login) {
+  const r = getDb()
+    .prepare("SELECT COALESCE(SUM(tokens_in + tokens_out), 0) AS t FROM usage_stats WHERE login = ?")
+    .get(login);
+  const off = getDb().prepare("SELECT usage_offset FROM user_limits WHERE login = ?").get(login);
+  const total = (r && r.t) || 0;
+  const offset = (off && off.usage_offset) || 0;
+  return Math.max(0, total - offset);
 }
 function quotaFor(login) {
   try {
     const lim = getDb().prepare("SELECT token_limit FROM user_limits WHERE login = ?").get(login);
     const limit = lim && lim.token_limit > 0 ? lim.token_limit : null;
-    if (limit === null) return { limit: null, used: 0 };
-    const used = getDb()
-      .prepare("SELECT COALESCE(SUM(tokens_in + tokens_out), 0) AS t FROM usage_stats WHERE login = ?")
-      .get(login);
-    return { limit, used: (used && used.t) || 0 };
+    return { limit, used: usedFor(login) };
   } catch (e) {
     console.error("[gtw-proxy] quota check failed:", e.message);
     return { limit: null, used: 0 }; // fail-open: сбой БД не блокирует чат
+  }
+}
+
+/* ── Сброс расхода токенов (ручной из админ-API и авто по расписанию) ── */
+// Реестр живых WS-клиентов, чтобы пушить свежую quota после авто-сброса.
+const liveClients = new Set(); // { login, sendQuota }
+
+/** Обнулить used логина через offset = текущая сумма; снапшоты не трогаем. */
+function resetUsageFor(login) {
+  const db = getDb();
+  const r = db.prepare("SELECT COALESCE(SUM(tokens_in + tokens_out), 0) AS t FROM usage_stats WHERE login = ?").get(login);
+  const total = (r && r.t) || 0;
+  const now = new Date().toISOString();
+  const existing = db.prepare("SELECT login FROM user_limits WHERE login = ?").get(login);
+  if (existing) {
+    db.prepare("UPDATE user_limits SET usage_offset = ?, last_reset_at = ?, updated_at = ? WHERE login = ?").run(total, now, now, login);
+  } else {
+    db.prepare("INSERT INTO user_limits (login, token_limit, usage_offset, last_reset_at, updated_at) VALUES (?, NULL, ?, ?, ?)").run(login, total, now, now);
+  }
+  for (const c of liveClients) {
+    if (c.login === login) { try { c.sendQuota(); } catch {} }
+  }
+  return total;
+}
+
+/** Ближайший авто-сброс строго после from (UTC). Зеркало usageStore.computeNextReset. */
+function computeNextReset(mode, hour, day, from) {
+  if (mode === "off") return null;
+  const h = Math.min(23, Math.max(0, Math.floor(hour)));
+  const at = (d) => { const x = new Date(d); x.setUTCHours(h, 0, 0, 0); return x; };
+  if (mode === "daily") {
+    let cand = at(from);
+    if (cand <= from) cand = new Date(cand.getTime() + 86400000);
+    return cand;
+  }
+  if (mode === "weekly") {
+    const target = (Math.min(7, Math.max(1, Math.floor(day))) - 1) % 7;
+    const jsTarget = (target + 1) % 7;
+    let cand = at(from);
+    for (let i = 0; i < 8; i++) {
+      if (cand.getUTCDay() === jsTarget && cand > from) return cand;
+      cand = new Date(cand.getTime() + 86400000);
+    }
+    return cand;
+  }
+  const dom = Math.min(28, Math.max(1, Math.floor(day)));
+  const cand = at(from);
+  cand.setUTCDate(dom);
+  if (cand <= from) { cand.setUTCMonth(cand.getUTCMonth() + 1); cand.setUTCDate(dom); }
+  return cand;
+}
+
+/** Планировщик: обнуляем расход тем, у кого next_reset_at уже наступил. */
+function runAutoResets() {
+  try {
+    const now = new Date();
+    const rows = getDb()
+      .prepare("SELECT login, reset_mode, reset_hour, reset_day, next_reset_at FROM user_limits WHERE reset_mode != 'off' AND next_reset_at IS NOT NULL")
+      .all();
+    for (const r of rows) {
+      if (!r.next_reset_at || new Date(r.next_reset_at) > now) continue;
+      resetUsageFor(r.login);
+      const next = computeNextReset(r.reset_mode, r.reset_hour, r.reset_day, now);
+      const nowIso = now.toISOString();
+      getDb()
+        .prepare("UPDATE user_limits SET next_reset_at = ?, last_reset_at = ?, updated_at = ? WHERE login = ?")
+        .run(next ? next.toISOString() : null, nowIso, nowIso, r.login);
+      console.log(`[gtw-proxy] авто-сброс расхода: ${r.login} (след. ${next ? next.toISOString() : "—"})`);
+    }
+  } catch (e) {
+    console.error("[gtw-proxy] auto-reset failed:", e.message);
   }
 }
 function chatOwnerLogin(chatId) {
@@ -191,6 +281,9 @@ function recordUsage(info) {
 }
 const chatOwners = new Map(); // chat_id -> login (из user_message этой сессии)
 const chatModels = new Map(); // chat_id -> "provider/model" (текущая модель из кадров шлюза)
+// Подтверждённая применённая модель (только из set_model_ack.ok / session_info).
+// models.current может нести дефолт профиля — пикер не должен откатываться на него.
+const appliedModels = new Map(); // chat_id -> "provider/model" (display-форма)
 
 /* ── Файлы: стор + реестр (тот же layout, что src/lib/fileStore.ts) ── */
 const MAX_FILE_SIZE = 25 * 1024 * 1024; // 25 МБ на файл (MVP)
@@ -397,9 +490,12 @@ app.prepare().then(() => {
     let closed = false;
     let bootModels = true; // первый кадр models — bootstrap-каталог для карты slug→display
 
+    const liveEntry = { login, sendQuota: () => {} };
+    liveClients.add(liveEntry);
     const closeBoth = (code, reason) => {
       if (closed) return;
       closed = true;
+      liveClients.delete(liveEntry);
       clearInterval(keepalive);
       try { client.close(code, reason); } catch {}
       try { upstream.close(); } catch {}
@@ -414,16 +510,12 @@ app.prepare().then(() => {
     // Индикатор лимита/расхода токенов в чате: агрегат по логину.
     // used считаем всегда (даже без лимита), limit — из user_limits (null = без лимита).
     const sendQuota = () => {
-      const { limit } = quotaFor(login);
+      let limit = null;
       let used = 0;
-      try {
-        const r = getDb()
-          .prepare("SELECT COALESCE(SUM(tokens_in + tokens_out), 0) AS t FROM usage_stats WHERE login = ?")
-          .get(login);
-        used = (r && r.t) || 0;
-      } catch {}
+      try { ({ limit, used } = quotaFor(login)); } catch {}
       sendToClient({ type: "quota", login, limit, used });
     };
+    liveEntry.sendQuota = sendQuota;
     sendQuota(); // стартовый снимок сразу при подключении
 
     upstream.on("open", () => {
@@ -448,18 +540,33 @@ app.prepare().then(() => {
             if (frame.type === "session_info" && frame.info) {
               recordUsage(frame.info);
               const inf = frame.info;
-              if (inf.provider && inf.model) chatModels.set(String(inf.chat_id), normModelKey(`${inf.provider}/${inf.model}`));
+              if (inf.provider && inf.model) {
+                const k = normModelKey(`${inf.provider}/${inf.model}`);
+                chatModels.set(String(inf.chat_id), k);
+                appliedModels.set(String(inf.chat_id), k);
+              }
               sendQuota(); // обновляем индикатор лимита после учёта токенов
             } else if (frame.type === "models") {
               learnProviders(frame.providers); // карта slug→display для гейта/пикера
               // bootstrap-каталог (запрос при open): только наполняем карту, в браузер не шлём
               if (bootModels) { bootModels = false; return; }
+              const cid = String(frame.chat_id);
+              // Пикер показывает ПРИМЕНЁННУЮ модель (подтверждённую set_model_ack /
+              // session_info), а не дефолт профиля из models.current: иначе открытие
+              // пикера (повторный запрос models) откатывает метку на запрещённый дефолт,
+              // а B1-защита autoSwitchTried уже не даёт переключить повторно.
+              const applied = appliedModels.get(cid);
               const cur = frame.current;
-              if (cur && cur.provider && cur.model) {
+              if (applied && applied.includes("/")) {
+                const i = applied.indexOf("/");
+                frame.current = { provider: applied.slice(0, i), model: applied.slice(i + 1) };
+                chatModels.set(cid, applied);
+                outData = Buffer.from(JSON.stringify(frame), "utf8");
+              } else if (cur && cur.provider && cur.model) {
                 // current к display: пикер подсвечивает текущую модель (ключи каталога —
                 // display), гейт хранит chatModels в той же форме.
                 cur.provider = providerSlugToDisplay.get(cur.provider) || cur.provider;
-                chatModels.set(String(frame.chat_id), `${cur.provider}/${cur.model}`);
+                chatModels.set(cid, `${cur.provider}/${cur.model}`);
                 outData = Buffer.from(JSON.stringify(frame), "utf8");
               }
               if (!isAdmin) {
@@ -474,7 +581,10 @@ app.prepare().then(() => {
               }
             } else if (frame.type === "set_model_ack" && frame.ok) {
               const mdl = normModelKey(String(frame.model || ""));
-              if (mdl.includes("/")) chatModels.set(String(frame.chat_id), mdl);
+              if (mdl.includes("/")) {
+                chatModels.set(String(frame.chat_id), mdl);
+                appliedModels.set(String(frame.chat_id), mdl);
+              }
             } else if (frame.type === "artifact") {
               // артефакт агента: url — host-путь файла. Копируем в стор + реестр,
               // подменяем url на /api/files/<id> (браузер не видит сырой путь).
@@ -676,5 +786,8 @@ app.prepare().then(() => {
   server.listen(port, () => {
     console.log(`[gtw] Next.js (${dev ? "dev" : "production"}) на :${port}`);
     console.log(`[gtw] WS-прокси /ws -> ${GTW_WS_URL} (токен: ${GTW_TOKEN ? "задан" : "НЕ ЗАДАН"})`);
+    // Авто-сброс расхода токенов по расписанию (проверка раз в минуту, время UTC).
+    runAutoResets();
+    setInterval(runAutoResets, 60000);
   });
 });

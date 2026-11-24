@@ -116,6 +116,13 @@ export function getDb(): DatabaseSync {
     // Миграция существующих БД: колонки project_id могли отсутствовать.
     addColumnIfMissing(db, "chats", "project_id", "TEXT");
     addColumnIfMissing(db, "files", "project_id", "TEXT");
+    // Сброс расхода токенов: offset (used = SUM(tokens) - usage_offset) и авто-сброс.
+    addColumnIfMissing(db, "user_limits", "usage_offset", "INTEGER NOT NULL DEFAULT 0");
+    addColumnIfMissing(db, "user_limits", "reset_mode", "TEXT NOT NULL DEFAULT 'off'");
+    addColumnIfMissing(db, "user_limits", "reset_hour", "INTEGER NOT NULL DEFAULT 0");
+    addColumnIfMissing(db, "user_limits", "reset_day", "INTEGER NOT NULL DEFAULT 1");
+    addColumnIfMissing(db, "user_limits", "next_reset_at", "TEXT");
+    addColumnIfMissing(db, "user_limits", "last_reset_at", "TEXT");
   }
   return db;
 }

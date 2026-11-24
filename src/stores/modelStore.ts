@@ -97,14 +97,17 @@ if (typeof window !== "undefined") {
         const { [frame.chat_id]: _drop, ...restSwitch } = s.switchingByChat;
         const cat = s.catalogByChat[frame.chat_id];
         let catalogByChat = s.catalogByChat;
-        if (frame.ok && cat) {
+        if (frame.ok) {
           const mdl = String(frame.model || "");
           const slash = mdl.indexOf("/");
-          const provider = slash >= 0 ? mdl.slice(0, slash) : cat.current?.provider || "";
+          const provider = slash >= 0 ? mdl.slice(0, slash) : cat?.current?.provider || "";
           const model = slash >= 0 ? mdl.slice(slash + 1) : mdl;
+          // ack мог прийти раньше кадра models (cat ещё нет) — создаём запись,
+          // чтобы пикер показал реально применённую модель, а не дефолт профиля.
+          const base = cat || { current: null, providers: [], restricted: false };
           catalogByChat = {
             ...s.catalogByChat,
-            [frame.chat_id]: { ...cat, current: { model, provider } },
+            [frame.chat_id]: { ...base, current: { model, provider } },
           };
         }
         return { switchingByChat: restSwitch, catalogByChat };

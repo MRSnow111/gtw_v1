@@ -9,7 +9,7 @@ import { AdminTable } from "@/components/admin/AdminTable";
 import { AdminModal } from "@/components/admin/AdminModal";
 import { GlassInput } from "@/components/ui/GlassInput";
 import { GlassButton } from "@/components/ui/GlassButton";
-import { Users, Plus, Trash2, Check } from "lucide-react";
+import { Users, Plus, Trash2, Check, RotateCcw, CalendarClock } from "lucide-react";
 
 export default function AdminUsersPage() {
   const [users, setUsers] = useState<any[]>([]);
@@ -18,9 +18,14 @@ export default function AdminUsersPage() {
   const [newLogin, setNewLogin] = useState("");
   const [newPassword, setNewPassword] = useState("");
   const [newRole, setNewRole] = useState<"admin" | "user">("user");
-  const [usage, setUsage] = useState<Record<string, { limit: number | null; used: number }>>({});
+  const [usage, setUsage] = useState<Record<string, { limit: number | null; used: number; resetMode: string; resetHour: number; resetDay: number; nextResetAt: string | null; lastResetAt: string | null }>>({});
   const [limitEditing, setLimitEditing] = useState<string | null>(null);
   const [limitValue, setLimitValue] = useState("");
+  const [resetEditing, setResetEditing] = useState<string | null>(null);
+  const [resetMode, setResetMode] = useState<"off" | "daily" | "weekly" | "monthly">("off");
+  const [resetHour, setResetHour] = useState("0");
+  const [resetDay, setResetDay] = useState("1");
+  const [resetBusy, setResetBusy] = useState(false);
   const [modelsMap, setModelsMap] = useState<Record<string, string[] | null>>({});
   const [modelEditing, setModelEditing] = useState<string | null>(null);
   const [modelAll, setModelAll] = useState(true);
@@ -39,8 +44,12 @@ export default function AdminUsersPage() {
     fetch("/api/admin/limits")
       .then((r) => r.json())
       .then((d) => {
-        const map: Record<string, { limit: number | null; used: number }> = {};
-        for (const u of d.users || []) map[u.login] = { limit: u.limit, used: u.used };
+        const map: Record<string, { limit: number | null; used: number; resetMode: string; resetHour: number; resetDay: number; nextResetAt: string | null; lastResetAt: string | null }> = {};
+        for (const u of d.users || []) map[u.login] = {
+          limit: u.limit, used: u.used,
+          resetMode: u.resetMode ?? "off", resetHour: u.resetHour ?? 0, resetDay: u.resetDay ?? 1,
+          nextResetAt: u.nextResetAt ?? null, lastResetAt: u.lastResetAt ?? null,
+        };
         setUsage(map);
       })
       .catch(() => {});
@@ -87,6 +96,64 @@ export default function AdminUsersPage() {
       loadLimits();
     } else {
       toast.error(data?.message ?? "Не удалось сохранить лимит");
+    }
+  };
+
+  const handleResetUsage = async (login: string) => {
+    const res = await fetch("/api/admin/limits/reset", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ login }),
+    });
+    const data = await res.json().catch(() => null);
+    if (res.ok) {
+      toast.success(`Расход токенов для «${login}» обнулён`);
+      loadLimits();
+    } else {
+      toast.error(data?.message ?? "Не удалось сбросить расход");
+    }
+  };
+
+  const openResetEditor = (login: string) => {
+    setResetEditing(login);
+    const u = usage[login];
+    setResetMode((u?.resetMode as "off" | "daily" | "weekly" | "monthly") || "off");
+    setResetHour(String(u?.resetHour ?? 0));
+    setResetDay(String(u?.resetDay ?? 1));
+  };
+  const saveResetConfig = async () => {
+    if (!resetEditing) return;
+    const hour = Number(resetHour);
+    const day = Number(resetDay);
+    if (!Number.isInteger(hour) || hour < 0 || hour > 23) {
+      toast.error("Час — целое число от 0 до 23");
+      return;
+    }
+    if (resetMode === "weekly" && (!Number.isInteger(day) || day < 1 || day > 7)) {
+      toast.error("День недели — от 1 (Пн) до 7 (Вс)");
+      return;
+    }
+    if (resetMode === "monthly" && (!Number.isInteger(day) || day < 1 || day > 28)) {
+      toast.error("Число месяца — от 1 до 28");
+      return;
+    }
+    setResetBusy(true);
+    try {
+      const res = await fetch("/api/admin/limits/auto", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ login: resetEditing, mode: resetMode, hour, day }),
+      });
+      const data = await res.json().catch(() => null);
+      if (res.ok) {
+        toast.success(resetMode === "off" ? `Авто-сброс для «${resetEditing}» выключен` : `Авто-сброс для «${resetEditing}» настроен`);
+        setResetEditing(null);
+        loadLimits();
+      } else {
+        toast.error(data?.message ?? "Не удалось сохранить авто-сброс");
+      }
+    } finally {
+      setResetBusy(false);
     }
   };
 
@@ -259,13 +326,45 @@ export default function AdminUsersPage() {
               key: "login",
               label: "Лимит",
               render: (login: string) => (
-                <button
-                  onClick={() => openLimitEditor(login)}
-                  className="rounded-lg px-2 py-1 text-xs text-mint transition-colors hover:bg-[rgba(143,184,174,0.1)]"
-                >
-                  {usage[login]?.limit ? "Изменить" : "Задать"}
-                </button>
+                <div className="flex items-center gap-1">
+                  <button
+                    onClick={() => openLimitEditor(login)}
+                    className="rounded-lg px-2 py-1 text-xs text-mint transition-colors hover:bg-[rgba(143,184,174,0.1)]"
+                  >
+                    {usage[login]?.limit ? "Изменить" : "Задать"}
+                  </button>
+                  <button
+                    onClick={() => handleResetUsage(login)}
+                    title="Обнулить израсходованные токены (лимит сохраняется)"
+                    className="flex items-center gap-1 rounded-lg px-2 py-1 text-xs text-[rgba(240,192,64,0.85)] transition-colors hover:bg-[rgba(240,192,64,0.12)]"
+                  >
+                    <RotateCcw className="h-3 w-3" />
+                    Сброс
+                  </button>
+                </div>
               ),
+            },
+            {
+              key: "login",
+              label: "Авто-сброс",
+              render: (login: string) => {
+                const u = usage[login];
+                const mode = u?.resetMode ?? "off";
+                const label =
+                  mode === "daily" ? `Ежедневно ${String(u?.resetHour ?? 0).padStart(2, "0")}:00`
+                  : mode === "weekly" ? `Еженедельно (${["Пн","Вт","Ср","Чт","Пт","Сб","Вс"][(u?.resetDay ?? 1) - 1]})`
+                  : mode === "monthly" ? `Ежемесячно (${u?.resetDay ?? 1}-го)`
+                  : "Выкл";
+                return (
+                  <button
+                    onClick={() => openResetEditor(login)}
+                    className="flex items-center gap-1.5 rounded-lg px-2 py-1 text-xs transition-colors hover:bg-[rgba(143,184,174,0.1)]"
+                  >
+                    <CalendarClock className="h-3.5 w-3.5 text-mint" />
+                    <span className={mode === "off" ? "text-[rgba(165,187,179,0.6)]" : "text-mint"}>{label}</span>
+                  </button>
+                );
+              },
             },
             {
               key: "login",
@@ -370,6 +469,78 @@ export default function AdminUsersPage() {
           При достижении лимита новые сообщения блокируются шлюзом до изменения лимита.
           {usage[limitEditing ?? ""] ? (
             <> Сейчас использовано: <span className="text-[rgba(220,235,230,0.85)]">{usage[limitEditing ?? ""].used.toLocaleString("ru-RU")}</span>.</>
+          ) : null}
+        </p>
+      </AdminModal>
+
+      <AdminModal
+        isOpen={resetEditing !== null}
+        onClose={() => setResetEditing(null)}
+        title={`Авто-сброс расхода — ${resetEditing ?? ""}`}
+        footer={
+          <>
+            <GlassButton size="sm" variant="ghost" onClick={() => setResetEditing(null)}>Отмена</GlassButton>
+            <GlassButton size="sm" onClick={saveResetConfig} disabled={resetBusy}>Сохранить</GlassButton>
+          </>
+        }
+      >
+        <div className="space-y-2">
+          <label className="text-sm font-medium text-[rgba(220,235,230,0.7)]">Периодичность</label>
+          <div className="grid grid-cols-2 gap-2">
+            {([
+              ["off", "Выключен"],
+              ["daily", "Ежедневно"],
+              ["weekly", "Еженедельно"],
+              ["monthly", "Ежемесячно"],
+            ] as const).map(([m, lbl]) => (
+              <button
+                key={m}
+                onClick={() => setResetMode(m)}
+                className={`py-2 rounded-xl text-sm transition-all ${
+                  resetMode === m
+                    ? "bg-[rgba(143,184,174,0.2)] text-[rgba(220,235,230,0.9)]"
+                    : "text-[rgba(165,187,179,0.5)] hover:bg-[rgba(143,184,174,0.08)]"
+                }`}
+              >
+                {lbl}
+              </button>
+            ))}
+          </div>
+        </div>
+        {resetMode !== "off" && (
+          <div className="mt-4 flex gap-3">
+            <GlassInput
+              label="Час (0–23, UTC)"
+              type="number"
+              value={resetHour}
+              onChange={(e) => setResetHour(e.target.value)}
+            />
+            {resetMode === "weekly" && (
+              <GlassInput
+                label="День (1=Пн - 7=Вс)"
+                type="number"
+                value={resetDay}
+                onChange={(e) => setResetDay(e.target.value)}
+              />
+            )}
+            {resetMode === "monthly" && (
+              <GlassInput
+                label="Число (1–28)"
+                type="number"
+                value={resetDay}
+                onChange={(e) => setResetDay(e.target.value)}
+              />
+            )}
+          </div>
+        )}
+        <p className="mt-3 text-xs leading-relaxed text-[rgba(165,187,179,0.55)]">
+          В указанное время израсходованные токены пользователя обнуляются (лимит сохраняется).
+          Время — серверное (UTC). Проверка планировщиком раз в минуту.
+          {usage[resetEditing ?? ""]?.nextResetAt ? (
+            <> Ближайший сброс: <span className="text-[rgba(220,235,230,0.85)]">{formatDate(usage[resetEditing ?? ""].nextResetAt!)}</span>.</>
+          ) : null}
+          {usage[resetEditing ?? ""]?.lastResetAt ? (
+            <> Последний: <span className="text-[rgba(220,235,230,0.85)]">{formatDate(usage[resetEditing ?? ""].lastResetAt!)}</span>.</>
           ) : null}
         </p>
       </AdminModal>
