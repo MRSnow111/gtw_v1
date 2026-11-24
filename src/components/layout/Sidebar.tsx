@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { useRouter } from "next/navigation";
 import { AnimatePresence, motion } from "framer-motion";
 import { formatDistanceToNowStrict } from "date-fns";
@@ -52,6 +53,9 @@ export function Sidebar({ className, onNavigate }: SidebarProps) {
 
   const [query, setQuery] = useState("");
   const [menuId, setMenuId] = useState<string | null>(null);
+  // якорь popover-меню чата (viewport-координаты): меню рендерится в portal в body,
+  // иначе overflow-hidden обёртки сворачиваемого проекта обрезает absolute-меню.
+  const [menuAnchor, setMenuAnchor] = useState<{ top: number; left: number } | null>(null);
   const [moveMenuId, setMoveMenuId] = useState<string | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [deleting, setDeleting] = useState<DemoChat | null>(null);
@@ -235,7 +239,14 @@ export function Sidebar({ className, onNavigate }: SidebarProps) {
               e.stopPropagation();
               setMoveMenuId(null);
               setProjectMenuId(null);
-              setMenuId(menuId === chat.id ? null : chat.id);
+              if (menuId === chat.id) { setMenuId(null); return; }
+              const r = e.currentTarget.getBoundingClientRect();
+              const W = 176, H = 190;
+              const left = Math.max(8, Math.min(r.right - W, window.innerWidth - W - 8));
+              let top = r.bottom + 6;
+              if (top + H > window.innerHeight - 8) top = Math.max(8, r.top - H - 6);
+              setMenuAnchor({ top, left });
+              setMenuId(chat.id);
             }}
             className={cn(
               "absolute right-2 top-1/2 flex h-7 w-7 -translate-y-1/2 items-center justify-center rounded-lg text-[rgba(220,235,230,0.7)] opacity-0 transition-all hover:bg-white/10 hover:text-foreground group-hover:opacity-100",
@@ -246,8 +257,7 @@ export function Sidebar({ className, onNavigate }: SidebarProps) {
             <MoreHorizontal className="h-4 w-4" />
           </button>
         )}
-        <AnimatePresence>
-          {menuId === chat.id && (
+        {menuId === chat.id && createPortal(
             <>
               <div className="fixed inset-0 z-40" onClick={closeMenus} />
               <motion.div
@@ -255,7 +265,8 @@ export function Sidebar({ className, onNavigate }: SidebarProps) {
                 animate={{ opacity: 1, y: 0, scale: 1 }}
                 exit={{ opacity: 0, y: -4, scale: 0.97 }}
                 transition={{ duration: 0.15 }}
-                className="glass-medium absolute right-1 top-10 z-50 w-44 rounded-2xl p-1.5"
+                style={{ top: menuAnchor?.top ?? 0, left: menuAnchor?.left ?? 0 }}
+                className="glass-medium fixed z-50 w-44 rounded-2xl p-1.5"
               >
                 {moveMenuId === chat.id ? (
                   <>
@@ -304,9 +315,9 @@ export function Sidebar({ className, onNavigate }: SidebarProps) {
                   </>
                 )}
               </motion.div>
-            </>
+            </>,
+            document.body
           )}
-        </AnimatePresence>
       </div>
     );
   };
