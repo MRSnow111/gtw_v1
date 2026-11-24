@@ -66,6 +66,7 @@ export interface DemoState {
   renameChat: (id: string, title: string) => void;
   deleteChat: (id: string) => void;
   retryArtifact: (id: string) => void;
+  removeArtifact: (id: string) => void;
 }
 
 const clone = <T,>(v: T): T => JSON.parse(JSON.stringify(v));
@@ -187,6 +188,8 @@ export const useDemoStore = create<DemoState>((set, get) => ({
           : a
       ),
     })),
+
+  removeArtifact: (id) => set((s) => ({ artifacts: s.artifacts.filter((a) => a.id !== id) })),
 }));
 
 /* ─────────────── Ход агента (демо-симуляция) ─────────────── */

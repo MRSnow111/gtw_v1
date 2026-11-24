@@ -5,7 +5,7 @@ import { AnimatePresence, motion } from "framer-motion";
 import {
   ArrowLeft, Check, Copy, Download, FileCode2, FileText, Folder, Inbox,
   Image as ImageIcon, TriangleAlert, X, Maximize2, Presentation, Loader2, Upload,
-  PanelRightClose, PanelRightOpen,
+  PanelRightClose, PanelRightOpen, Trash2,
 } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
@@ -17,6 +17,8 @@ import { formatSize } from "@/lib/demoData";
 import { detectKind } from "@/lib/fileKind";
 import { GlassBadge, IconButton } from "@/components/ui/glass";
 import { Markdown } from "@/lib/markdown";
+import { OfficeViewer } from "@/components/artifacts/OfficeViewer";
+import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 
 /* ─────────── простая подсветка синтаксиса (без зависимостей) ─────────── */
 
@@ -171,38 +173,6 @@ function DownloadBox({ a }: { a: Artifact }) {
   );
 }
 
-function OfficeBox({ a, onConvert }: { a: Artifact; onConvert: (a: Artifact) => void }) {
-  return (
-    <div className="glass-light flex flex-1 flex-col items-center justify-center gap-3 rounded-xl p-6 text-center">
-      <div className="glass-medium flex h-14 w-14 items-center justify-center rounded-2xl">
-        <Presentation className="h-6 w-6 text-mint" />
-      </div>
-      <div className="text-[13px] text-foreground">{a.name}</div>
-      <div className="text-[11px] text-[rgba(220,235,230,0.6)]">
-        Офисный документ{a.size ? ` · ${a.size}` : ""}
-      </div>
-      <button
-        onClick={() => onConvert(a)}
-        className="glass-medium mt-1 flex items-center gap-2 rounded-xl px-4 py-2 text-xs text-foreground transition-colors hover:border-mint/40"
-      >
-        <FileText className="h-3.5 w-3.5" /> Открыть как PDF
-      </button>
-      {dlUrl(a) && (
-        <a
-          href={dlUrl(a)}
-          download={a.name}
-          className="flex items-center gap-1.5 text-[11px] text-dim transition-colors hover:text-foreground"
-        >
-          <Download className="h-3 w-3" /> Скачать оригинал
-        </a>
-      )}
-      <p className="max-w-[260px] text-[10.5px] leading-relaxed text-[rgba(220,235,230,0.5)]">
-        Агент сконвертирует файл в PDF и пришлёт его в чат.
-      </p>
-    </div>
-  );
-}
-
 /* ─────────── тело просмотрщика по типу файла ─────────── */
 
 function FileBody({
@@ -257,7 +227,7 @@ function FileBody({
   }
 
   if (a.kind === "office") {
-    return <OfficeBox a={a} onConvert={onConvert} />;
+    return <OfficeViewer a={a} onConvert={onConvert} />;
   }
 
   if (needsText) {
@@ -293,7 +263,7 @@ function FileBody({
 /* ─────────── панель ─────────── */
 
 export function ArtifactPanel({ className }: { className?: string }) {
-  const { artifacts, activeChatId, retryArtifact, sendMessage, chats } = useAgentStore();
+  const { artifacts, activeChatId, retryArtifact, removeArtifact, sendMessage, chats } = useAgentStore();
   const projects = useProjectStore((s) => s.projects);
   const artifactWidth = useUiStore((s) => s.artifactWidth);
   const toggleArtifactWide = useUiStore((s) => s.toggleArtifactWide);
@@ -305,6 +275,8 @@ export function ArtifactPanel({ className }: { className?: string }) {
   const [projectFiles, setProjectFiles] = useState<Artifact[]>([]);
   const [loadingFiles, setLoadingFiles] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const [pendingDelete, setPendingDelete] = useState<Artifact | null>(null);
+  const [deleting, setDeleting] = useState(false);
 
   const activeProjectId = chats.find((c) => c.id === activeChatId)?.projectId ?? null;
   const activeProject = projects.find((p) => p.id === activeProjectId) ?? null;
@@ -425,6 +397,35 @@ export function ArtifactPanel({ className }: { className?: string }) {
     toast.info("Запросил конвертацию в PDF — агент пришлёт файл в чат");
   };
 
+  const confirmDelete = async () => {
+    const a = pendingDelete;
+    if (!a || deleting) return;
+    setDeleting(true);
+    try {
+      // файл с сервера удаляем только если он зарегистрирован в сторе (fileId)
+      if (a.fileId) {
+        const res = await fetch(`/api/files/${encodeURIComponent(a.fileId)}`, { method: "DELETE" });
+        if (!res.ok && res.status !== 404) {
+          toast.error("Не удалось удалить файл");
+          return;
+        }
+      }
+      removeArtifact(a.id);
+      setProjectFiles((pf) => pf.filter((x) => x.id !== a.id));
+      if (selectedId === a.id) {
+        setSelectedId(null);
+        setViewerOpen(false);
+        setLightbox(false);
+      }
+      toast.success(a.fileId ? "Файл удалён" : "Артефакт убран из панели");
+      setPendingDelete(null);
+    } catch {
+      toast.error("Не удалось удалить файл");
+    } finally {
+      setDeleting(false);
+    }
+  };
+
   const kindIcon = (a: Artifact) =>
     a.kind === "code" ? FileCode2 : a.kind === "image" ? ImageIcon : a.kind === "office" ? Presentation : FileText;
 
@@ -452,6 +453,13 @@ export function ArtifactPanel({ className }: { className?: string }) {
             )}
             <IconButton onClick={() => setViewerOpen(true)} aria-label="Открыть">
               <Maximize2 className="h-4 w-4" />
+            </IconButton>
+            <IconButton
+              onClick={() => setPendingDelete(selected)}
+              aria-label="Удалить файл"
+              title="Удалить файл"
+            >
+              <Trash2 className="h-4 w-4" />
             </IconButton>
           </>
         ) : activeProject ? (
@@ -571,6 +579,17 @@ export function ArtifactPanel({ className }: { className?: string }) {
                     <Download className="h-3.5 w-3.5" />
                   </a>
                 )}
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setPendingDelete(a);
+                  }}
+                  aria-label={`Удалить ${a.name}`}
+                  title="Удалить файл"
+                  className="glass-light flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-dim opacity-0 transition-all hover:text-red-300 focus:opacity-100 group-hover:opacity-100"
+                >
+                  <Trash2 className="h-3.5 w-3.5" />
+                </button>
               </div>
             );
           })}
@@ -632,6 +651,13 @@ export function ArtifactPanel({ className }: { className?: string }) {
                   <Download className="h-3.5 w-3.5" /> Скачать
                 </a>
               )}
+              <button
+                onClick={() => setPendingDelete(selected)}
+                aria-label="Удалить файл"
+                className="glass-light flex h-8 items-center gap-1.5 rounded-lg px-3 text-[11px] text-dim transition-colors hover:text-red-300"
+              >
+                <Trash2 className="h-3.5 w-3.5" /> Удалить
+              </button>
               <IconButton onClick={() => setViewerOpen(false)} aria-label="Закрыть (Esc)">
                 <X className="h-4 w-4" />
               </IconButton>
@@ -642,6 +668,21 @@ export function ArtifactPanel({ className }: { className?: string }) {
           </motion.div>
         )}
       </AnimatePresence>
+
+      <ConfirmDialog
+        open={!!pendingDelete}
+        title="Удалить файл?"
+        description={
+          pendingDelete
+            ? `«${pendingDelete.name}» будет удалён безвозвратно${pendingDelete.fileId ? " с сервера" : " из панели"}.`
+            : undefined
+        }
+        confirmLabel={deleting ? "Удаление…" : "Удалить"}
+        onConfirm={confirmDelete}
+        onCancel={() => {
+          if (!deleting) setPendingDelete(null);
+        }}
+      />
     </div>
   );
 }

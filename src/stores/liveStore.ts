@@ -563,4 +563,6 @@ export const useLiveStore = create<DemoState>()((set, get) => ({
       retryArtifact: () => {
         toast.info("Артефакты приходят от агента автоматически");
       },
+
+      removeArtifact: (id) => set((s) => ({ artifacts: s.artifacts.filter((a) => a.id !== id) })),
 }));
