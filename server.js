@@ -141,6 +141,13 @@ function sessionInfoBlockOwner(chatId, login) {
     // мой зарегистрированный чат → разрешён
     const mine = getDb().prepare("SELECT 1 FROM chats WHERE chat_id = ? AND login = ?").get(chatId, login);
     if (mine) return "";
+    // я фактический пользователь чата (usage_stats) → разрешён, даже если реестр
+    // chats записан на другой логин. Иначе ложный «Недостаточно прав»: чат мог
+    // открываться админом/другим аккаунтом (реестр сменил владельца), а ходит в нём
+    // прежний пользователь — его usage_stats-владение легитимно. Посторонний без
+    // строки usage_stats по-прежнему блокируется ниже.
+    const usageMine = getDb().prepare("SELECT 1 FROM usage_stats WHERE chat_id = ? AND login = ?").get(chatId, login);
+    if (usageMine) return "";
     // зарегистрирован на другого → чужой
     const reg = getDb().prepare("SELECT login FROM chats WHERE chat_id = ?").get(chatId);
     if (reg && reg.login) return reg.login;
