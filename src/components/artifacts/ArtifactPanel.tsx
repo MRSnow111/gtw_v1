@@ -344,6 +344,27 @@ export function ArtifactPanel({ className }: { className?: string }) {
     setSelectedId(null);
   }, [activeChatId]);
 
+  // Как у Claude: новый файл агента автоматически открывает предпросмотр в панели.
+  // На маунте/смене чата существующие артефакты не открываем — только свежие.
+  const seenArtifactsRef = useRef<Set<string> | null>(null);
+  useEffect(() => {
+    if (seenArtifactsRef.current === null) {
+      seenArtifactsRef.current = new Set(artifacts.map((a) => a.id));
+      return;
+    }
+    const seen = seenArtifactsRef.current;
+    const fresh = artifacts.filter((a) => !seen.has(a.id));
+    if (!fresh.length) return;
+    fresh.forEach((a) => seen.add(a.id));
+    // не прерываем полноэкранный просмотр / лайтбокс
+    if (viewerOpen || lightbox) return;
+    const forActive = fresh.filter((a) => a.chatId === activeChatId);
+    if (forActive.length) {
+      setTab("artifacts");
+      setSelectedId(forActive[0].id);
+    }
+  }, [artifacts, activeChatId, viewerOpen, lightbox]);
+
   const list = tab === "project" ? projectFiles : chatArtifacts;
   const selected =
     list.find((a) => a.id === selectedId) || chatArtifacts.find((a) => a.id === selectedId) || null;
