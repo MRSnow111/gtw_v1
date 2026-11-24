@@ -630,7 +630,8 @@ class GTWAdapter(BasePlatformAdapter):
         """WS-эндпоинт CDP страницы браузерного агента.
         GTW_BROWSER_CDP — явный ws://host/devtools/page/<id>. Иначе авто-поиск:
         GTW_BROWSER_DEBUG_PORT или DevToolsActivePort в GTW_BROWSER_PROFILE →
-        http://127.0.0.1:<port>/json/list → первый page-таргет."""
+        http://<GTW_BROWSER_CDP_HOST|127.0.0.1>:<port>/json/list → первый page-таргет.
+        GTW_BROWSER_CDP_HOST — адрес CDP-моста, когда браузер в sandbox-контейнере."""
         import os
         explicit = os.environ.get("GTW_BROWSER_CDP", "").strip()
         if explicit:
@@ -645,15 +646,21 @@ class GTWAdapter(BasePlatformAdapter):
                     port = ""
         if not port:
             return ""
+        host = os.environ.get("GTW_BROWSER_CDP_HOST", "127.0.0.1").strip() or "127.0.0.1"
         try:
             import aiohttp
+            from urllib.parse import urlsplit
             async with aiohttp.ClientSession() as sess:
-                async with sess.get(f"http://127.0.0.1:{port}/json/list",
+                async with sess.get(f"http://{host}:{port}/json/list",
                                     timeout=aiohttp.ClientTimeout(total=5)) as r:
                     targets = await r.json()
             for t in targets or []:
                 if t.get("type") == "page" and t.get("webSocketDebuggerUrl"):
-                    return str(t["webSocketDebuggerUrl"])
+                    # Chromium отдаёт свой внутренний адрес (напр. 127.0.0.1:<случ.порт>
+                    # внутри sandbox-контейнера). Перенаправляем на доступные host:port
+                    # (CDP-мост), сохраняя путь таргета /devtools/page/<id>.
+                    path = urlsplit(str(t["webSocketDebuggerUrl"])).path
+                    return f"ws://{host}:{port}{path}"
         except Exception as e:
             logger.warning("GTW live: CDP discover failed: %s", e)
         return ""

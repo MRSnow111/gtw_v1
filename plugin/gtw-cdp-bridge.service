@@ -1,0 +1,13 @@
+[Unit]
+Description=GTW live-browser CDP bridge (host -> agent sandbox container)
+After=docker.service network-online.target
+Wants=network-online.target
+
+[Service]
+ExecStart=/usr/bin/python3 /home/hermes/gtw-cdp-bridge-host.py
+Restart=always
+RestartSec=3
+User=root
+
+[Install]
+WantedBy=multi-user.target
