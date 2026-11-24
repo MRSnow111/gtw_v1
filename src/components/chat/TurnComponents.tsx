@@ -455,7 +455,10 @@ function ThinkingBlock({ turn }: { turn: Turn }) {
 function CompactStatus({ turn }: { turn: Turn }) {
   if (turn.agentState !== "running") return null;
   if ((turn.answer || "").length > 0) return null; // ответ пошёл — статус больше не нужен
-  const usingTool = (turn.tools || []).some((t) => t.status === "running");
+  const usingTool =
+    (turn.tools || []).some((t) => t.status === "running") ||
+    Object.keys(turn.statusNotes || {}).length > 0 ||
+    (turn.thinkingText || "").length > 0;
   return (
     <div className="flex items-center gap-2 text-[12px]">
       <Loader2 className="h-3 w-3 animate-spin text-mint" />

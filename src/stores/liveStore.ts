@@ -24,6 +24,23 @@ const silenceTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
 const uid = (p: string) => `${p}${Date.now().toString(36)}${Math.random().toString(36).slice(2, 7)}`;
 
+// Tool-progress уведомления ядра («💻 Running …», «📚 Reading skill …») приходят как
+// message/message_edit БЕЗ metadata (у GTW пустой _progress_metadata) — это шаги
+// инструмента, НЕ финальный ответ. Прячем их в statusNotes: compact-пользователь не
+// видит детали (только строка статуса), admin — список шагов в «Рассуждениях».
+// Regex совпадает с plugin/probe.py::_TOOL_PROGRESS (проверен на живых кадрах).
+const TOOL_PROGRESS_RE =
+  /^\s*(?:💻|🔧|🛠|📁|📂|🌐|🔍|🔎|📄|📝|⚙|🖥|📦|🧰|🗑|✏|📋|🧪|🚀|💾|📥|📤|🔨|📡|📚|📖|🗂|📰)\uFE0F?\s/;
+const isToolProgress = (text: string) => TOOL_PROGRESS_RE.test(text || "");
+
+// Шаг tool-progress в statusNotes (Record<key,text>) под стабильным ключом message_id:
+// растущие edit-снапшоты одного сообщения обновляют свою строку, не плодят дубли.
+function appendStep(t: Turn, key: string, text: string): Record<string, string> {
+  const s = (text || "").trim();
+  if (!s) return t.statusNotes || {};
+  return { ...(t.statusNotes || {}), [key || "step"]: s };
+}
+
 function patchTurn(chatId: string, turnId: string, patch: Partial<Turn> | ((t: Turn) => Partial<Turn>)) {
   useLiveStore.setState((s) => ({
     turnsByChat: {
@@ -153,6 +170,18 @@ function onFrame(frame: GtwServerFrame) {
         armSilence(chatId);
         break;
       }
+      // Tool-progress без metadata («📚 Reading skill …», «💻 Running …») — шаг
+      // инструмента, не финальный ответ: копим в statusNotes (скрыто у compact).
+      if (isToolProgress(frame.content || "")) {
+        const t = ensureAgentTurn(chatId);
+        patchTurn(chatId, t.id, (prev) => ({
+          statusNotes: appendStep(prev, frame.message_id || "step", frame.content || ""),
+          agentState: "running",
+          messageId: frame.message_id || prev.messageId,
+        }));
+        armSilence(chatId);
+        break;
+      }
       const turns = useLiveStore.getState().turnsByChat[chatId] || [];
       const existing = turns.find((x) => x.kind === "agent" && x.messageId === frame.message_id);
       const t = existing || ensureAgentTurn(chatId);
@@ -173,6 +202,23 @@ function onFrame(frame: GtwServerFrame) {
       if (!t) {
         t = ensureAgentTurn(chatId);
         patchTurn(chatId, t.id, { messageId: frame.message_id });
+      }
+      // Снапшоты tool-progress («📚 Reading skill … → references/…») — шаги, не ответ.
+      if (isToolProgress(frame.content || "")) {
+        patchTurn(chatId, t.id, (prev) => ({
+          statusNotes: appendStep(prev, frame.message_id || "step", frame.content || ""),
+          agentState: "running",
+        }));
+        if (frame.finalize) {
+          clearSilence(chatId);
+          patchTurn(chatId, t.id, {
+            agentState: "done",
+            thinkingMs: t.thinkingMs ?? Math.max(0, Date.now() - t.createdAt),
+          });
+        } else {
+          armSilence(chatId);
+        }
+        break;
       }
       finishThinking(chatId, t);
       patchTurn(chatId, t.id, { answer: frame.content, revealed: frame.content.length });
