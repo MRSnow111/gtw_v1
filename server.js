@@ -281,9 +281,13 @@ function recordUsage(info) {
 }
 const chatOwners = new Map(); // chat_id -> login (из user_message этой сессии)
 const chatModels = new Map(); // chat_id -> "provider/model" (текущая модель из кадров шлюза)
-// Подтверждённая применённая модель (только из set_model_ack.ok / session_info).
-// models.current может нести дефолт профиля — пикер не должен откатываться на него.
+// Подтверждённая применённая модель (из set_model_ack.ok; session_info — только пока
+// не было ack). models.current и session_info могут нести дефолт профиля/устаревшую
+// модель — пикер не должен откатываться на них после подтверждённого переключения.
 const appliedModels = new Map(); // chat_id -> "provider/model" (display-форма)
+// Чаты, где модель подтверждена set_model_ack: session_info не перетирает appliedModels
+// (клиент шлёт session_info сразу после ack для метрик, и тот может нести старую модель).
+const ackConfirmed = new Set();
 
 /* ── Файлы: стор + реестр (тот же layout, что src/lib/fileStore.ts) ── */
 const MAX_FILE_SIZE = 25 * 1024 * 1024; // 25 МБ на файл (MVP)
@@ -542,14 +546,22 @@ app.prepare().then(() => {
               const inf = frame.info;
               if (inf.provider && inf.model) {
                 const k = normModelKey(`${inf.provider}/${inf.model}`);
-                chatModels.set(String(inf.chat_id), k);
-                appliedModels.set(String(inf.chat_id), k);
+                const cid = String(inf.chat_id);
+                // После подтверждённого переключения (ack) session_info может нести
+                // устаревшую/профильную модель — не перетираем применённую.
+                if (!ackConfirmed.has(cid)) {
+                  chatModels.set(cid, k);
+                  appliedModels.set(cid, k);
+                }
               }
               sendQuota(); // обновляем индикатор лимита после учёта токенов
             } else if (frame.type === "models") {
               learnProviders(frame.providers); // карта slug→display для гейта/пикера
-              // bootstrap-каталог (запрос при open): только наполняем карту, в браузер не шлём
-              if (bootModels) { bootModels = false; return; }
+              // bootstrap-каталог (запрос при open, chat_id "main"): только наполняем
+              // карту, в браузер не шлём. Гасим именно "main", чтобы клиентский запрос
+              // каталога (draft/реальный чат), пришедший сразу при подключении, не был
+              // проглочен, даже если его ответ обогнал bootstrap-ответ.
+              if (bootModels && String(frame.chat_id) === "main") { bootModels = false; return; }
               const cid = String(frame.chat_id);
               // Пикер показывает ПРИМЕНЁННУЮ модель (подтверждённую set_model_ack /
               // session_info), а не дефолт профиля из models.current: иначе открытие
@@ -582,8 +594,10 @@ app.prepare().then(() => {
             } else if (frame.type === "set_model_ack" && frame.ok) {
               const mdl = normModelKey(String(frame.model || ""));
               if (mdl.includes("/")) {
-                chatModels.set(String(frame.chat_id), mdl);
-                appliedModels.set(String(frame.chat_id), mdl);
+                const cid = String(frame.chat_id);
+                chatModels.set(cid, mdl);
+                appliedModels.set(cid, mdl);
+                ackConfirmed.add(cid); // применённая модель подтверждена — session_info её не перетрёт
               }
             } else if (frame.type === "artifact") {
               // артефакт агента: url — host-путь файла. Копируем в стор + реестр,

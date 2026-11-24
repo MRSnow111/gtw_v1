@@ -5,6 +5,10 @@ import { AnimatePresence, motion } from "framer-motion";
 import { Check, Cpu, RefreshCw, X } from "lucide-react";
 import { useModelStore, DRAFT_CHAT_ID } from "@/stores/modelStore";
 import { useAgentStore } from "@/stores/agentStore";
+import { gtwSocket } from "@/lib/gtwSocket";
+
+/** Интервал фонового обновления каталога моделей (список держим актуальным). */
+const MODELS_REFRESH_MS = 30000;
 
 /**
  * Пикер модели в шапке чата (LIVE). Показывает текущую модель и каталог
@@ -42,6 +46,29 @@ export function ModelPicker({ chatId }: { chatId: string | null }) {
   useEffect(() => {
     if (open) requestModels(effectiveId);
   }, [open, effectiveId, requestModels]);
+
+  // Постоянное обновление списка доступных моделей: фоновый интервал, запрос при
+  // подключении/реконнекте и при смене чата (onStatus сразу отдаёт текущий статус),
+  // а также при возврате на вкладку. Белый список админа сервер читает из БД на каждый
+  // запрос, поэтому правки разрешённых моделей и новые модели агента подхватываются сами.
+  useEffect(() => {
+    const refresh = () => {
+      if (gtwSocket.status === "connected") requestModels(effectiveId);
+    };
+    const timer = setInterval(refresh, MODELS_REFRESH_MS);
+    const offStatus = gtwSocket.onStatus((s) => {
+      if (s === "connected") requestModels(effectiveId);
+    });
+    const onVisibility = () => {
+      if (document.visibilityState === "visible") refresh();
+    };
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => {
+      clearInterval(timer);
+      offStatus();
+      document.removeEventListener("visibilitychange", onVisibility);
+    };
+  }, [effectiveId, requestModels]);
 
   const pick = (key: string) => {
     if (isDraft) {
