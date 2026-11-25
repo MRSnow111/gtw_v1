@@ -33,6 +33,33 @@ function bad(message: string, status = 400) {
   return NextResponse.json({ code: "bad_request", message }, { status });
 }
 
+/** S8: секреты/ключи не читаем, не пишем и не удаляем через менеджер,
+ *  даже внутри выделенного корня (GTW_FILES_DIR может указывать куда угодно). */
+function sensitiveName(rel: string): boolean {
+  const base = path.basename(rel || "").toLowerCase();
+  if (base.startsWith(".env")) return true;
+  return /\.(env|pem|key|p12|pfx|jks|keystore)$/.test(base);
+}
+
+/** S8: whitelist расширений для создания/сохранения (текстовые форматы). */
+const EDITABLE_EXT = new Set([
+  "txt", "md", "markdown", "csv", "tsv", "json", "html", "htm",
+  "css", "log", "xml", "yaml", "yml",
+]);
+function editablePath(rel: string): boolean {
+  const ext = path.extname(rel || "").replace(/^\./, "").toLowerCase();
+  return EDITABLE_EXT.has(ext);
+}
+
+/** Есть ли внутри директории чувствительные файлы (запрет рекурсивного удаления). */
+function dirHasSensitive(dir: string): boolean {
+  for (const e of fs.readdirSync(/*turbopackIgnore: true*/ dir, { withFileTypes: true })) {
+    if (sensitiveName(e.name)) return true;
+    if (e.isDirectory() && dirHasSensitive(path.join(dir, e.name))) return true;
+  }
+  return false;
+}
+
 // GET /api/admin/files?path=<rel>            — список директории
 // GET /api/admin/files?path=<rel>&content=1  — содержимое файла
 export async function GET(request: NextRequest) {
@@ -42,7 +69,7 @@ export async function GET(request: NextRequest) {
   const url = new URL(request.url);
   const rel = url.searchParams.get("path") ?? "";
   const p = safeResolve(rel);
-  if (!p) return bad("Недопустимый путь");
+  if (!p || sensitiveName(rel)) return bad("Недопустимый путь");
   if (!fs.existsSync(/*turbopackIgnore: true*/ p)) return bad("Путь не найден", 404);
 
   const stat = fs.statSync(/*turbopackIgnore: true*/ p);
@@ -87,6 +114,9 @@ export async function POST(request: NextRequest) {
   }
   const p = safeResolve(body.path);
   if (!p || p === ROOT) return bad("Недопустимый путь");
+  if (sensitiveName(body.path) || !editablePath(body.path)) {
+    return bad("Тип файла не разрешён для редактирования", 403);
+  }
   if (Buffer.byteLength(body.content, "utf8") > MAX_SIZE) return bad("Содержимое больше 1 МБ", 413);
   if (fs.existsSync(/*turbopackIgnore: true*/ p) && fs.statSync(/*turbopackIgnore: true*/ p).isDirectory()) return bad("По этому пути директория");
   fs.mkdirSync(/*turbopackIgnore: true*/ path.dirname(p), { recursive: true });
@@ -102,8 +132,11 @@ export async function DELETE(request: NextRequest) {
   if (unauthorized) return unauthorized;
   const rel = new URL(request.url).searchParams.get("path") ?? "";
   const p = safeResolve(rel);
-  if (!p || p === ROOT) return bad("Недопустимый путь");
+  if (!p || p === ROOT || sensitiveName(rel)) return bad("Недопустимый путь");
   if (!fs.existsSync(/*turbopackIgnore: true*/ p)) return bad("Путь не найден", 404);
+  if (fs.statSync(/*turbopackIgnore: true*/ p).isDirectory() && dirHasSensitive(p)) {
+    return bad("В директории есть защищённые файлы — удаление запрещено", 403);
+  }
   fs.rmSync(/*turbopackIgnore: true*/ p, { recursive: true, force: true });
   const actor = (await getSession(request))?.login ?? "?";
   logEvent("file_deleted", actor, rel);

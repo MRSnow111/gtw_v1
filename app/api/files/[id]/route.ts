@@ -23,6 +23,9 @@ type Ctx = { params: Promise<{ id: string }> };
 function inlineSafe(mime: string): boolean {
   const m = String(mime || "").toLowerCase();
   if (m === "image/svg+xml") return false; // svg может нести скрипт
+  // S2: html/xhtml — активный контент, исполняется в origin сайта (XSS);
+  // префикс text/ их НЕ должен пропускать inline. Отдаём только attachment.
+  if (m === "text/html" || m === "application/xhtml+xml") return false;
   return m.startsWith("image/") || m === "application/pdf" || m.startsWith("text/");
 }
 

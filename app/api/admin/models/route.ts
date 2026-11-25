@@ -42,12 +42,18 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ code: "bad_request", message: "Некорректное имя модели" }, { status: 400 });
   }
 
-  const ack = await gtwRequest<SetModelAck>({ type: "set_model", chat_id: chatId, model }, "set_model_ack", 15000);
+  // S6: user_id обязателен — адаптер (S1) сверяет владельца целевого чата,
+  // иначе админ-роут менял бы модель в чате любого пользователя без проверки.
+  const session = await getSession(request);
+  const ack = await gtwRequest<SetModelAck>(
+    { type: "set_model", chat_id: chatId, model, user_id: session?.login },
+    "set_model_ack",
+    15000
+  );
   if (!ack) {
     return NextResponse.json({ code: "gateway_unavailable", message: "Шлюз недоступен" }, { status: 503 });
   }
   if (ack.ok) {
-    const session = await getSession(request);
     logEvent("model_set", session?.login || "admin", `${chatId} → ${model}`);
   }
   return NextResponse.json({ ok: ack.ok, chatId, model });

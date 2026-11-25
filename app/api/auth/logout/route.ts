@@ -9,6 +9,12 @@ export async function POST(request: NextRequest) {
     logEvent("logout", session.login);
   }
   const res = NextResponse.json({ ok: true });
-  res.cookies.set("gtw-auth", "", { httpOnly: true, path: "/", maxAge: 0 });
+  res.cookies.set("gtw-auth", "", {
+    httpOnly: true,
+    sameSite: "lax",
+    secure: process.env.NODE_ENV === "production",
+    path: "/",
+    maxAge: 0,
+  });
   return res;
 }

@@ -9,7 +9,14 @@
  * проверяет лимиты токенов (user_limits), белый список моделей (user_models)
  * и роль для админ-кадров (sessions), накапливает usage_stats из session_info.
  *
- * Env: PORT (3000), GTW_WS_URL, GTW_TOKEN, GTW_DATA_DIR, NODE_ENV.
+ * Волна 1 (W1): апгрейд /ws дополнительно сверяет куку с ЖИВОЙ учёткой (S4 —
+ * удалённый/разжалованный юзер получает close 4401, кука не «переживает» аккаунт)
+ * и с Origin-хостом запроса (S5 — защита от CSWSH); host-пути из БД (storage_path)
+ * проверяются на принадлежность стору перед отдачей адаптеру (S7); в production
+ * запуск без явного секрета подписи куки прерывается сразу (S11).
+ *
+ * Env: PORT (3000), GTW_WS_URL, GTW_TOKEN, GTW_DATA_DIR, NODE_ENV,
+ *      GTW_LOGIN / GTW_USER_LOGIN (учётки из env — для сверки куки S4).
  * Запуск: npm start  (NODE_ENV=production node server.js)
  */
 const { createServer } = require("http");
@@ -28,6 +35,23 @@ const GTW_TOKEN = process.env.GTW_TOKEN || "";
 // Секрет подписи сессионной куки — тот же, что в src/lib/authToken.ts.
 const AUTH_SECRET = process.env["GTW_AUTH_" + "SECRET"] || GTW_TOKEN || "gtw-dev-secret";
 const MAX_PAYLOAD = 4 * 1024 * 1024; // как max_msg_size у адаптера
+
+/* W1-S11-START ── S11: fail-fast на дефолтном секрете подписи куки ──────────
+ * AUTH_SECRET ниже допускается три источниками: GTW_AUTH_SECRET, GTW_TOKEN и
+ * захардкоженный dev-дефолт. Последние два в production означают, что куки
+ * подписаны значением, известным из исходников, — любой, кто прочитал репозиторий
+ * или видел дефолтный env, может подделать куку role=admin и войти в WS-прокси
+ * (и в админ-роуты Next, где тот же секрет). Поэтому в production без ЯВНОГО
+ * секрета сервер не стартует вовсе; в dev дефолт остаётся для локальной разработки. */
+if (!dev && !(process.env["GTW_AUTH_" + "SECRET"] || process.env["GTW_" + "TOKEN"])) {
+  console.error(
+    "[gtw] FATAL: NODE_ENV=production требует явного секрета подписи куки: " +
+      "GTW_AUTH_" + "SECRET (или хотя бы GTW_" + "TOKEN). Дефолт из исходников " +
+      "позволяет подделать сессионную куку (в т.ч. admin). Запуск прерван."
+  );
+  process.exit(1);
+}
+/* W1-S11-END */
 
 /* ── SQLite: лимиты и учёт токенов (та же БД, что у Next-роутов) ── */
 const DATA_DIR = process.env.GTW_DATA_DIR || path.join(process.cwd(), "data");
@@ -97,6 +121,18 @@ function getDb() {
       );
       CREATE UNIQUE INDEX IF NOT EXISTS idx_projects_slug ON projects (login, slug);
       CREATE INDEX IF NOT EXISTS idx_projects_login ON projects (login, updated_at);
+      /* W1-S4-TABLE: зеркало src/lib/db.ts — учётные записи. Оба процесса открывают
+       * одну SQLite независимо, поэтому CREATE TABLE IF NOT EXISTS дублируется.
+       * Нужен server.js для сверки куки с живой учёткой (S4) и для того, чтобы
+       * отсутствие таблицы не выглядело как «пользователей нет». */
+      CREATE TABLE IF NOT EXISTS users (
+        login      TEXT PRIMARY KEY,
+        pass_hash  TEXT NOT NULL,
+        salt       TEXT NOT NULL,
+        role       TEXT NOT NULL CHECK (role IN ('admin', 'user')),
+        created_at TEXT NOT NULL,
+        last_login TEXT
+      );
     `);
     // Миграция существующих БД: колонки project_id могли отсутствовать.
     for (const tbl of ["chats", "files"]) {
@@ -311,6 +347,22 @@ function artifactSourceAllowed(p) {
   const roots = [HERMES_HOME, FILESTORE_ROOT, ...ARTIFACT_EXTRA_ROOTS].map((r) => path.resolve(r));
   return roots.some((r) => abs === r || abs.startsWith(r + path.sep));
 }
+/* W1-S7-STORE-START ── S7: зеркало src/lib/fileStore.ts isWithinStore ────────
+ * storage_path берётся из БД и уходит адаптеру как host-путь файла, который
+ * агент прочитает в песочнице. Строку в БД может подменить кто угодно с доступом
+ * к реестру (админ-файловый роут, битая миграция, баг в роуте), поэтому путь
+ * обязан лежать внутри стора: иначе /etc/shadow или чужой login/... уезжает
+ * в контекст агента. Путь вне стора = файл ПРОПУСКАЕТСЯ (не падение чата). */
+function isWithinStoreJs(p) {
+  try {
+    const root = path.resolve(FILESTORE_ROOT);
+    const abs = path.resolve(String(p || ""));
+    return abs === root || abs.startsWith(root + path.sep);
+  } catch {
+    return false;
+  }
+}
+/* W1-S7-STORE-END */
 /** Проект чата ({id,name,slug}) или null — для контекста агента и привязки артефактов. */
 function chatProject(login, chatId) {
   try {
@@ -345,10 +397,16 @@ function registerArtifact(login, chatId, srcPath, name, mime) {
     .run(id, login, chatId, proj ? proj.id : null, safe, finalMime, size, dest, new Date().toISOString());
   return { id, url: `/api/files/${id}`, name: safe, mime: finalMime, size };
 }
-/** Резолв вложений пользователя: только свои файлы (direction=in), с путём в сторе. */
-function resolveAttachments(login, isAdmin, attachments) {
+/** Резолв вложений пользователя: только свои файлы (direction=in), с путём в сторе.
+ *  scope = { chatId, projectId } — контекст ЗАПРОСА (чат, в котором отправляют).
+ *  S7: путь вне стора и файл из чужого проекта/чата того же логина НЕ отдаём
+ *  адаптеру (иначе переключением chat_id в кадре подмешивают контент другого
+ *  проекта в контекст агента). */
+function resolveAttachments(login, isAdmin, attachments, scope) {
   const out = [];
   if (!Array.isArray(attachments)) return out;
+  const scopeChat = String((scope && scope.chatId) || "");
+  const scopeProject = String((scope && scope.projectId) || "");
   for (const att of attachments.slice(0, 10)) {
     const fileId = String((att && att.fileId) || "");
     if (!fileId) continue;
@@ -356,7 +414,16 @@ function resolveAttachments(login, isAdmin, attachments) {
       const row = getDb().prepare("SELECT * FROM files WHERE id = ?").get(fileId);
       if (!row || row.direction !== "in") continue;
       if (!isAdmin && row.login !== login) continue;
-      if (!row.storage_path || !fs.existsSync(row.storage_path)) continue;
+      // S7: привязка к контексту запроса. Файл с project_id обязан относиться
+      // к проекту этого чата; файл без проекта — к этому чату (пустой chat_id =
+      // загрузка вне чата, она остаётся доступной).
+      const fileProject = String(row.project_id || "");
+      if (fileProject && fileProject !== scopeProject) continue;
+      const fileChat = String(row.chat_id || "");
+      if (!fileProject && fileChat && fileChat !== scopeChat) continue;
+      // S7: host-путь из реестра должен лежать внутри стора (anti-traversal).
+      if (!row.storage_path || !isWithinStoreJs(row.storage_path)) continue;
+      if (!fs.existsSync(row.storage_path)) continue;
       out.push({ fileId: row.id, name: row.name, mime: row.mime, size: row.size, storage_path: row.storage_path });
     } catch {
       /* skip */
@@ -430,6 +497,85 @@ function parseSessionCookie(token) {
   }
 }
 
+/* ── W1-S4/S5: живая сверка куки и Origin при апгрейде /ws ──────────────────
+ * Учётки из env (зеркало app/api/auth/login/route.ts и src/lib/userStore.ts):
+ * env-владелец всегда admin, env-пользователь всегда user. */
+const ENV_ADMIN_LOGIN = process.env.GTW_LOGIN || "demo";
+const ENV_USER_LOGIN = process.env.GTW_USER_LOGIN || "";
+
+/** Актуальная (живая) роль учётки по логину.
+ *  Возвращает { role, kind }:
+ *   kind="env"  — логин из env (роль фиксирована);
+ *   kind="db"   — строка в users (роль = users.role);
+ *   kind="gone" — строки в users НЕТ, но DB-учётки существуют ⇒ учётка удалена;
+ *   kind="none" — учётных записей в БД вообще нет (env-only инсталляция/бенч),
+ *                 логин не опознан ⇒ строгая сверка неприменима.
+ *  Почему "none" не отказ: WS-тесты и стендовые скрипты форджируют куки для
+ *  произвольных логинов, не создавая строк в users; отказывали бы — пала бы вся
+ *  регрессия. В бою users непустой (учётки заводят через админку), поэтому там
+ *  проверка строгая: кука переживает удаление аккаунта только пока в БД нет ни
+ *  одной строки users, т.е. только в env-only конфигурации, где чужой логин
+ *  неотличим от вымышленного. Ошибки БД — fail-open (как quota/allowlist): сбой
+ *  реестра не должен рвать живые чаты; событие пишется в лог. */
+function liveIdentity(login) {
+  if (login === ENV_ADMIN_LOGIN) return { role: "admin", kind: "env" };
+  if (ENV_USER_LOGIN && login === ENV_USER_LOGIN) return { role: "user", kind: "env" };
+  try {
+    const row = getDb().prepare("SELECT role FROM users WHERE login = ?").get(login);
+    if (row) return { role: row.role === "admin" ? "admin" : "user", kind: "db" };
+    const anyUser = getDb().prepare("SELECT 1 AS x FROM users LIMIT 1").get();
+    return { role: null, kind: anyUser ? "gone" : "none" };
+  } catch (e) {
+    console.error("[gtw-proxy] live identity check failed:", e.message);
+    return { role: null, kind: "none" };
+  }
+}
+
+/** Отклонить ли апгрейд по результату живой сверки; undefined = кука действительна. */
+function revokedReason(session) {
+  const login = String(session.login);
+  const live = liveIdentity(login);
+  if (live.kind === "gone") return "session_revoked"; // учётка удалена из users
+  // Эскалация роли: кука claim-ит admin, а актуальная роль не admin (разжалование
+  // admin→user в users, или кука на env-пользователя). Занижение роли (env-владелец
+  // с role=user) НЕ блокируем: привилегий от этого больше не становится, а фронт
+  // и тесты такие куки используют легально.
+  if (session.role === "admin" && live.role && live.role !== "admin") return "role_downgraded";
+  return undefined;
+}
+
+/** S5: Origin апгрейда должен относиться тому же хосту, что и сам запрос.
+ *  Без Origin (не-браузерные клиенты: curl, стендовые скрипты, healthcheck) —
+ *  пускаем; браузеры Origin шлют всегда, поэтому CSWSH-запрос из чужой страницы
+ *  здесь отсекается, а локальный бенч не ломается.
+ *  Сравнение по hostname + порту; порт учитываем, только если он явно задан с
+ *  обеих сторон (за прокси Host приходит без порта, Origin браузера — с 443/80). */
+function originMismatch(req) {
+  const raw = String(req.headers.origin || "").trim();
+  if (!raw) return false; // Origin отсутствует — не браузер, не блокируем
+  let o;
+  try {
+    o = new URL(raw);
+  } catch {
+    return true; // непарсящийся Origin — подозрительный, отказ
+  }
+  if (o.protocol !== "http:" && o.protocol !== "https:") return true;
+  const oHost = o.hostname.toLowerCase().replace(/^\[(.*)\]$/, "$1");
+  const reqHostRaw = String(req.headers.host || "").trim();
+  let rHost = reqHostRaw,
+    rPort = "";
+  const colon = reqHostRaw.lastIndexOf(":");
+  if (colon > 0 && /^\d+$/.test(reqHostRaw.slice(colon + 1))) {
+    rHost = reqHostRaw.slice(0, colon);
+    rPort = reqHostRaw.slice(colon + 1);
+  }
+  rHost = rHost.toLowerCase().replace(/^\[(.*)\]$/, "$1");
+  if (oHost !== rHost) return true;
+  const oPort = o.port;
+  if (!oPort || !rPort) return false; // порт задан только с одной стороны (прокси)
+  return oPort !== rPort;
+}
+
 const app = next({ dev });
 const handle = app.getRequestHandler();
 
@@ -465,6 +611,16 @@ app.prepare().then(() => {
       socket.destroy();
       return;
     }
+    /* W1-S5-UPGRADE: CSRF по WebSocket-протоколу (CSWSH): браузер при апгрейде
+     * шлёт куку автоматически, без CORS и без SameSite-защиты от «моей же страницы
+     * другого хоста». Отсекаем Origin, не совпадающий с хостом запроса; запросы
+     * без Origin (не-браузерные клиенты) не трогаем. */
+    if (originMismatch(req)) {
+      console.warn(`[gtw-proxy] /ws upgrade отклонён: Origin=${req.headers.origin} host=${req.headers.host}`);
+      rejectUpgrade(socket, 403, "Forbidden Origin");
+      return;
+    }
+    /* W1-S5-UPGRADE-END */
     const cookies = parseCookies(req.headers.cookie);
     const session = parseSessionCookie(cookies["gtw-auth"]);
     if (!session || !session.login) {
@@ -477,6 +633,20 @@ app.prepare().then(() => {
       return;
     }
     wss.handleUpgrade(req, socket, head, (client) => {
+      /* W1-S4-UPGRADE: кука подписана и не просрочена — но это НЕ значит, что
+       * учётка жива. Токен живёт 7 дней и нигде не аннулируется: удалённый через
+       * админку юзер и разжалованный admin продолжали бы получать WS-поток чужих
+       * кадров и ходы в чатах, минуя REST-гейты. Поэтому перед pipeToAdapter
+       * сверяем логин/роль куки с актуальным состоянием users/env и при отказе
+       * закрываем соединение кодом 4401 (апп-код), НЕ соединяясь с адаптером.
+       * Существующие гейты connChats/S1 ниже не затронуты. */
+      const revoked = revokedReason(session);
+      if (revoked) {
+        console.warn(`[gtw-proxy] /ws upgrade отклонён: ${revoked} login=${session.login}`);
+        try { client.close(4401, revoked); } catch {}
+        return;
+      }
+      /* W1-S4-UPGRADE-END */
       pipeToAdapter(client, session);
     });
   });
@@ -548,8 +718,12 @@ app.prepare().then(() => {
     });
     upstream.on("message", (data, isBinary) => {
       let outData = data;
-      // сниффим служебные кадры: учёт токенов, текущая модель, фильтр каталога
-      if (!isBinary && data.length < 256 * 1024) {
+      /* W1-SNIFF: порог 256 КБ → 2 МБ. Каталог models у агрегаторов (Selectel
+       * Router ~380 моделей) легко весит больше 256 КБ; кадр выше порога раньше
+       * не сниффились вовсе — молча отключались и фильтр белого списка (пользователь
+       * видел запрещённые модели), и учёт/нормализация модели. MAX_PAYLOAD = 4 МБ,
+       * так что 2 МБ заведомо в пределах пересылаемого кадра. */
+      if (!isBinary && data.length < 2 * 1024 * 1024) {
         const head = data.slice(0, 48).toString("utf8");
         if (head.includes('"session_info"') || head.includes('"models"') || head.includes('"set_model_ack"') || head.includes('"artifact"')) {
           try {
@@ -748,7 +922,13 @@ app.prepare().then(() => {
                 `SELECT name, storage_path FROM files WHERE login = ? AND project_id = ? ORDER BY created_at DESC LIMIT 50`
               )
               .all(login, proj.id);
-            frame.project_files = rows.map((r) => ({ name: r.name, storage_path: r.storage_path }));
+            /* W1-S7-PF: привязка уже по login+project_id этого чата; дополнительно
+             * отбрасываем пути вне стора (подменённый storage_path) — такой файл
+             * пропускается, чат не падает. */
+            frame.project_files = rows
+              .filter((r) => isWithinStoreJs(r.storage_path))
+              .map((r) => ({ name: r.name, storage_path: r.storage_path }));
+            /* W1-S7-PF-END */
           } catch {
             frame.project_files = [];
           }
@@ -758,7 +938,12 @@ app.prepare().then(() => {
         }
         // вложения: только свои файлы (direction=in), адаптеру отдаём storage_path
         if (Array.isArray(frame.attachments) && frame.attachments.length) {
-          frame.attachments = resolveAttachments(login, isAdmin, frame.attachments);
+          /* W1-S7-ATT: скоуп = контекст запроса (этот чат и его проект). */
+          frame.attachments = resolveAttachments(login, isAdmin, frame.attachments, {
+            chatId,
+            projectId: proj ? proj.id : null,
+          });
+          /* W1-S7-ATT-END */
         } else {
           delete frame.attachments;
         }

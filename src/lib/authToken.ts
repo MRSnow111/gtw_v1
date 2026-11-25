@@ -4,6 +4,9 @@
  * Web Crypto — работает и в edge-middleware, и в Node-роутах.
  * Секрет: GTW_AUTH_SECRET, иначе GTW_TOKEN (уже есть в gtw.env), иначе dev-заглушка.
  * Тот же формат проверяет server.js (node:crypto) при апгрейде /ws.
+ * S11: в production секрет ОБЯЗАТЕЛЕН — при его отсутствии подпись/проверка
+ * токенов падает с ошибкой конфигурации, а не молча использует dev-заглушку
+ * (иначе любой, кто знает открытый исходник, подписывает себе admin-куку).
  */
 export type Role = "admin" | "user";
 
@@ -13,9 +16,27 @@ export interface SessionPayload {
   exp: number;
 }
 
-const SECRET =
-  process.env.GTW_AUTH_SECRET || process.env.GTW_TOKEN || "gtw-dev-secret";
 const enc = new TextEncoder();
+
+/**
+ * S11: секрет резолвится лениво и БЕЗ молчаливого дефолта в production.
+ * В dev (NODE_ENV!=="production") допускается заглушка — стенд/локальный запуск.
+ * Бросаем исключение при ПЕРВОМ использовании, чтобы подпись куки не могла
+ * состояться на known-default секретке.
+ */
+const DEV_FALLBACK_SECRET = "***";
+
+export function sessionSecret(): string {
+  const s = process.env.GTW_AUTH_SECRET || process.env.GTW_TOKEN;
+  if (s) return s;
+  if (process.env.NODE_ENV === "production") {
+    throw new Error(
+      "GTW config: в production не задан GTW_AUTH_SECRET (или GTW_TOKEN) — " +
+        "подпись сессионных токенов запрещена (S11)"
+    );
+  }
+  return DEV_FALLBACK_SECRET;
+}
 
 function b64url(bytes: Uint8Array): string {
   let s = "";
@@ -33,7 +54,7 @@ function unb64url(s: string): Uint8Array<ArrayBuffer> {
 async function hmacKey(): Promise<CryptoKey> {
   return crypto.subtle.importKey(
     "raw",
-    enc.encode(SECRET),
+    enc.encode(sessionSecret()),
     { name: "HMAC", hash: "SHA-256" },
     false,
     ["sign", "verify"]
@@ -60,6 +81,10 @@ export async function signSession(
 export async function verifySession(
   token: string | undefined | null
 ): Promise<SessionPayload | null> {
+  // S11: проверка конфигурации ДО try/catch — в production без секрета
+  // верификация не должна молча превращаться в «null» (это выглядело бы как
+  // «все куки невалидны»); падаем явно, как и signSession.
+  sessionSecret();
   if (!token) return null;
   const parts = token.split(".");
   if (parts.length !== 3 || parts[0] !== "v1") return null;

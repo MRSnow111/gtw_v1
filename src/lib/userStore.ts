@@ -2,8 +2,15 @@
  * Пользователи GTW: env-аккаунт владельца + пользователи из SQLite.
  * Пароли — scrypt (N=16384) с индивидуальной солью; сравнение timing-safe.
  * Хеши никогда не покидают сервер.
+ *
+ * S4: currentRole() — единственный источник «актуальной роли» для сверки
+ * сессионной куки на КАЖДОМ запросе (удалённый юзер → null → 401,
+ * разжалованный админ → "user" → не админ-доступ).
+ * S3: verifyUser выполняет фиктивный scrypt для неизвестного логина, чтобы
+ * время ответа не выдавало существование учётки; сравнение env-паролей —
+ * timingSafeEqual по буферам (secretEquals), не `===`.
  */
-import { randomBytes, scryptSync, timingSafeEqual } from "node:crypto";
+import { createHash, randomBytes, scryptSync, timingSafeEqual } from "node:crypto";
 import { getDb } from "./db";
 
 export type Role = "admin" | "user";
@@ -28,6 +35,48 @@ interface UserRow {
 
 function hashPassword(password: string, salt: string): string {
   return scryptSync(password, salt, 64).toString("hex");
+}
+
+/**
+ * S3.3: константный «жёлудь» — соль/хеш, против которых прогоняется scrypt,
+ * когда логин не найден. Без этого неизвестный логин отвечал бы мгновенно и
+ * по времени ответа перечислялся бы список пользователей.
+ */
+const DUMMY_SALT = randomBytes(16).toString("hex");
+const DUMMY_HASH = hashPassword("gtw-timing-equalizer", DUMMY_SALT);
+
+/** Выполняет настоящую scrypt-работу без результата (уравнивание времени). */
+export function burnScrypt(password: string): void {
+  const expected = Buffer.from(DUMMY_HASH, "hex");
+  const actual = scryptSync(String(password || ""), DUMMY_SALT, 64);
+  if (expected.length === actual.length) timingSafeEqual(expected, actual);
+}
+
+/**
+ * S3.3: сравнение секретов за постоянное время по ДЛИНЕ (через SHA-256),
+ * иначе `===` на строках разной длины утекает по времени/раннему выходу.
+ */
+export function secretEquals(a: string | null | undefined, b: string | null | undefined): boolean {
+  const ha = createHash("sha256").update(String(a ?? "")).digest();
+  const hb = createHash("sha256").update(String(b ?? "")).digest();
+  return timingSafeEqual(ha, hb);
+}
+
+/**
+ * S4: актуальная роль логина (env-админ / env-юзер / строка в users),
+ * либо null — учётной записи больше нет. Используется для сверки куки
+ * при каждом запросе: удалённый юзер теряет доступ немедленно, независимо
+ * от того, что подпись куки ещё валидна и не просрочена.
+ */
+export function currentRole(login: string): Role | null {
+  if (!login) return null;
+  if (login === ADMIN_LOGIN) return "admin";
+  if (LEGACY_USER_LOGIN && login === LEGACY_USER_LOGIN) return "user";
+  const row = getDb()
+    .prepare("SELECT role FROM users WHERE login = ?")
+    .get(login) as { role: string } | undefined;
+  if (!row) return null;
+  return row.role === "admin" ? "admin" : "user";
 }
 
 export function listUsers(): StoredUser[] {
@@ -63,8 +112,11 @@ export function addUser(login: string, password: string, role: Role): StoredUser
   if (!/^[a-zA-Z0-9_.-]{2,32}$/.test(login)) {
     throw new Error("Логин: 2–32 символа, буквы/цифры/._-");
   }
-  if (password.length < 4) {
-    throw new Error("Пароль: минимум 4 символа");
+  // S3.4: минимум 8 — ТОЛЬКО для создаваемых DB-пользователей. Env-пароль
+  // владельца (GTW_PASSWORD) не валидируется: владелец сам решает, что ему
+  // ставить, и блокировать вход дефолтным правилом нельзя.
+  if (password.length < 8) {
+    throw new Error("Пароль: минимум 8 символов");
   }
   if (role !== "admin" && role !== "user") {
     throw new Error("Неизвестная роль");
@@ -96,7 +148,12 @@ export function verifyUser(login: string, password: string): { login: string; ro
   const row = getDb()
     .prepare("SELECT login, role, pass_hash, salt FROM users WHERE login = ?")
     .get(login) as (UserRow & { pass_hash: string; salt: string }) | undefined;
-  if (!row) return null;
+  if (!row) {
+    // S3.3: неизвестный логин стоит столько же, сколько известный (тот же
+    // scrypt), иначе время ответа перечисляет пользователей по логину.
+    burnScrypt(password);
+    return null;
+  }
   const expected = Buffer.from(row.pass_hash, "hex");
   const actual = scryptSync(password, row.salt, 64);
   if (expected.length !== actual.length || !timingSafeEqual(expected, actual)) {
