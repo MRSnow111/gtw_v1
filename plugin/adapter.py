@@ -694,85 +694,109 @@ class GTWAdapter(BasePlatformAdapter):
             await ws.send_json({"type": "browser_live_ack", "chat_id": chat_id, "active": True})
 
     async def _live_producer(self) -> None:
-        """Подключается к CDP браузера, Page.startScreencast → browser_frame зрителям."""
+        """Периодический Page.captureScreenshot АКТИВНОЙ вкладки → browser_frame.
+
+        Page.startScreencast шлёт кадр ТОЛЬКО при изменении страницы, поэтому
+        статичная страница «замерзала» (картинка не обновлялась, fps показывал
+        устаревшее среднее). Вместо этого опрашиваем скриншот с фиксированным
+        интервалом: картинка всегда свежая, навигация видна сразу, fps реальный.
+        Каждый тик берём ПЕРВЫЙ page-таргет /json/list — это активная вкладка
+        (Target.activateTarget ставит её первой), поэтому следим за переключениями
+        вкладок агентом. GTW_BROWSER_CDP (явный page-ws) — фиксированная вкладка.
+        """
+        import os
         import time
         import aiohttp
-        url = await self._browser_cdp_url()
-        if not url:
+        from urllib.parse import urlsplit
+        interval = 0.35
+        explicit = os.environ.get("GTW_BROWSER_CDP", "").strip()
+        host = os.environ.get("GTW_BROWSER_CDP_HOST", "127.0.0.1").strip() or "127.0.0.1"
+        port = os.environ.get("GTW_BROWSER_DEBUG_PORT", "").strip()
+        if not port and not explicit:
+            prof = os.environ.get("GTW_BROWSER_PROFILE", "").strip()
+            if prof:
+                try:
+                    port = (Path(prof) / "DevToolsActivePort").read_text().splitlines()[0].strip()
+                except Exception:
+                    port = ""
+        if not explicit and not port:
             logger.warning("GTW live: no CDP endpoint (set GTW_BROWSER_CDP / GTW_BROWSER_DEBUG_PORT)")
             await self._send_live({"type": "browser_live_ack", "chat_id": "", "active": False, "error": "no_cdp"})
             self._live_task = None
             return
+        base = f"http://{host}:{port}" if port else ""
         msg_id = 0
+        cur_id = None
+        cur_ws = None
+        cur_url = ""
+        fails = 0
 
-        def nxt() -> int:
+        async def shot(ws):
             nonlocal msg_id
             msg_id += 1
-            return msg_id
+            mid = msg_id
+            await ws.send_json({"id": mid, "method": "Page.captureScreenshot",
+                                "params": {"format": "jpeg", "quality": 60}})
+            while True:
+                m = await asyncio.wait_for(ws.receive(), timeout=5)
+                if m.type != aiohttp.WSMsgType.TEXT:
+                    continue
+                f = m.json()
+                if f.get("id") == mid:
+                    return (f.get("result") or {}).get("data", "")
 
         try:
             async with aiohttp.ClientSession() as sess:
-                async with sess.ws_connect(url, max_msg_size=32 * 1024 * 1024, heartbeat=30) as cdp:
-                    async def call(method, params=None):
-                        nonlocal msg_id
-                        msg_id += 1
-                        mid = msg_id
-                        await cdp.send_json({"id": mid, "method": method, "params": params or {}})
-                        while True:
-                            m = await cdp.receive()
-                            if m.type != aiohttp.WSMsgType.TEXT:
-                                continue
-                            f = m.json()
-                            if f.get("id") == mid:
-                                return f.get("result") or {}
-
-                    await call("Page.enable")
-                    # текущий URL до старта потока: страница уже загружена, frameNavigated
-                    # для неё не придёт — берём из истории навигации
-                    with contextlib.suppress(Exception):
-                        hist = await call("Page.getNavigationHistory")
-                        entries = hist.get("entries") or []
-                        idx = hist.get("currentIndex", 0)
-                        if 0 <= idx < len(entries):
-                            self._live_url = str(entries[idx].get("url") or "")
-                    await cdp.send_json({"id": nxt(), "method": "Page.startScreencast",
-                                         "params": {"format": "jpeg", "quality": 60,
-                                                    "maxWidth": 1280, "maxHeight": 800, "everyNthFrame": 1}})
-                    # начальный кадр сразу: screencast шлёт кадры только при изменениях страницы
-                    with contextlib.suppress(Exception):
-                        await cdp.send_json({"id": nxt(), "method": "Page.captureScreenshot",
-                                             "params": {"format": "jpeg", "quality": 60}})
-                    async for msg in cdp:
-                        if not self._live_viewers:
-                            break
-                        if msg.type != aiohttp.WSMsgType.TEXT:
-                            continue
-                        f = msg.json()
-                        m = f.get("method")
-                        if m == "Page.frameNavigated":
-                            fr = (f.get("params") or {}).get("frame") or {}
-                            if not fr.get("parentId"):
-                                self._live_url = str(fr.get("url") or "")
-                        elif m == "Page.screencastFrame":
-                            p = f.get("params") or {}
-                            sid = p.get("sessionId")
-                            with contextlib.suppress(Exception):
-                                await cdp.send_json({"id": nxt(), "method": "Page.screencastFrameAck",
-                                                     "params": {"sessionId": sid}})
-                            meta = p.get("metadata") or {}
-                            await self._send_live({"type": "browser_frame", "chat_id": "",
-                                                   "data": p.get("data", ""), "url": self._live_url,
-                                                   "ts": int(time.time() * 1000),
-                                                   "width": meta.get("deviceWidth"),
-                                                   "height": meta.get("deviceHeight")})
+                while self._live_viewers:
+                    t0 = time.time()
+                    try:
+                        if explicit:
+                            if cur_ws is None or cur_ws.closed:
+                                cur_ws = await sess.ws_connect(explicit, max_msg_size=32 * 1024 * 1024, heartbeat=30)
+                                cur_id = "explicit"
+                            tid = "explicit"
                         else:
-                            res = f.get("result") or {}
-                            if isinstance(res, dict) and res.get("data"):
-                                await self._send_live({"type": "browser_frame", "chat_id": "",
-                                                       "data": res["data"], "url": self._live_url,
-                                                       "ts": int(time.time() * 1000)})
+                            async with sess.get(base + "/json/list", timeout=aiohttp.ClientTimeout(total=5)) as r:
+                                targets = await r.json()
+                            page = next((t for t in targets or []
+                                         if t.get("type") == "page" and t.get("webSocketDebuggerUrl")), None)
+                            if page is None:
+                                await asyncio.sleep(interval)
+                                continue
+                            tid = page.get("id")
+                            cur_url = str(page.get("url") or "")
+                            if cur_id != tid or cur_ws is None or cur_ws.closed:
+                                if cur_ws:
+                                    with contextlib.suppress(Exception):
+                                        await cur_ws.close()
+                                pws = f"ws://{host}:{port}{urlsplit(str(page['webSocketDebuggerUrl'])).path}"
+                                cur_ws = await sess.ws_connect(pws, max_msg_size=32 * 1024 * 1024, heartbeat=30)
+                                cur_id = tid
+                        data = await shot(cur_ws)
+                        if data:
+                            fails = 0
+                            await self._send_live({"type": "browser_frame", "chat_id": "", "data": data,
+                                                   "url": cur_url, "ts": int(time.time() * 1000)})
+                        else:
+                            fails += 1
+                    except asyncio.CancelledError:
+                        raise
+                    except Exception as e:
+                        fails += 1
+                        logger.debug("GTW live tick: %s", e)
+                        if cur_ws:
+                            with contextlib.suppress(Exception):
+                                await cur_ws.close()
+                        cur_ws = None
+                        cur_id = None
+                    if fails >= 12:
+                        await self._send_live({"type": "browser_live_ack", "chat_id": "",
+                                               "active": False, "error": "cdp_disconnected"})
+                        break
+                    await asyncio.sleep(max(0.05, interval - (time.time() - t0)))
+                if cur_ws:
                     with contextlib.suppress(Exception):
-                        await cdp.send_json({"id": nxt(), "method": "Page.stopScreencast"})
+                        await cur_ws.close()
         except asyncio.CancelledError:
             raise
         except Exception as e:
