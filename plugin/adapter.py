@@ -94,6 +94,12 @@ class GTWAdapter(BasePlatformAdapter):
         self._history: dict[str, deque] = {}
         self._approval_sessions: dict[str, str] = {}  # request_id -> session_key
         self._chat_stats: dict[str, dict] = {}  # chat_id -> статистика сессии
+        # ── S1 изоляция: владельцы чатов/сокетов (defense-in-depth, слой 2) ──
+        self._chat_owner: dict[str, str] = {}       # chat_id -> user_id (из user_message)
+        self._sock_user: dict[Any, str] = {}        # ws -> user_id (кадры server.js, login из куки)
+        self._sock_role: dict[Any, str] = {}        # ws -> role ("admin"/"user", из server.js)
+        self._approval_owner: dict[str, str] = {}   # request_id -> user_id (владелец чата)
+        self._clarify_owner: dict[str, str] = {}    # clarify_id -> user_id (владелец чата)
         # ── изоляция пользователей по профилям Hermes (multiplex) ──
         self._served_cache: set = set()          # имена профилей, уже обслуживаемых шлюзом
         self._routed_cache: set = set()          # имена профилей с уже инжектированным маршрутом
@@ -534,20 +540,51 @@ class GTWAdapter(BasePlatformAdapter):
     # ── WebSocket plumbing ───────────────────────────────────────────────────
 
     async def _broadcast(self, payload: dict[str, Any]) -> int:
-        """Send a JSON frame to every authenticated socket; returns delivery count."""
+        """Send a JSON frame to every authenticated socket; returns delivery count.
+
+        S1 (слой 2, defense-in-depth): приватные кадры — кадры с chat_id, у которого
+        известен владелец (_chat_owner из user_message) — доставляются только
+        владельцу и админам. Неизвестный сокет (ни одного кадра с user_id) чужие
+        приватные кадры не получает. Кадры без chat_id или без известного владельца
+        идут всем (системные/legacy-потоки).
+        """
         import json
 
         if not self._sockets:
             return 0
         data = json.dumps(payload, ensure_ascii=False, default=str)
+        owner = self._chat_owner.get(str(payload.get("chat_id") or ""))
         delivered = 0
         for ws in list(self._sockets):
+            if owner:
+                su = self._sock_user.get(ws)
+                if self._sock_role.get(ws) == "admin":
+                    pass  # админ получает всё
+                elif su is None:
+                    continue  # неизвестный сокет не получает чужие приватные кадры
+                elif su != owner:
+                    continue
             try:
                 await ws.send_str(data)
                 delivered += 1
             except Exception:
                 self._sockets.discard(ws)
         return delivered
+
+    def _foreign_frame(self, ws, chat_id: str, frame: dict[str, Any]) -> bool:
+        """S1: True — запрос относится к чужому приватному чату (soft-гейт).
+
+        Владелец чата известен, user_id запроса задан и не совпадает с владельцем,
+        роль не admin. Кадры без user_id (бенч/старые клиенты -> "gtw") и чаты без
+        известного владельца не считаются чужими — legacy-потоки не ломаются.
+        """
+        owner = self._chat_owner.get(str(chat_id or ""))
+        if not owner:
+            return False
+        uid = frame.get("user_id")
+        if not uid or str(uid) == owner:
+            return False
+        return self._sock_role.get(ws) != "admin" and str(frame.get("role") or "") != "admin"
 
     def _remember(self, chat_id: str, role: str, content: str, message_id: str) -> None:
         items = self._history.setdefault(chat_id, deque(maxlen=_HISTORY_LIMIT))
@@ -582,6 +619,9 @@ class GTWAdapter(BasePlatformAdapter):
                     break
         finally:
             self._sockets.discard(ws)
+            # S1: чистим карты изоляции этого сокета
+            self._sock_user.pop(ws, None)
+            self._sock_role.pop(ws, None)
             self._live_viewers.pop(ws, None)
             if not self._live_viewers and self._live_task and not self._live_task.done():
                 self._live_task.cancel()
@@ -590,13 +630,25 @@ class GTWAdapter(BasePlatformAdapter):
 
     async def _on_frame(self, ws, frame: dict[str, Any]) -> None:
         kind = frame.get("type")
+        # S1: регистрируем пользователя/роль сокета (server.js инжектит login из куки).
+        if frame.get("user_id"):
+            self._sock_user[ws] = str(frame["user_id"])
+        if frame.get("role"):
+            self._sock_role[ws] = str(frame["role"])
         if kind == "user_message":
             await self._inbound_message(frame)
         elif kind == "approval_response":
             await self._resolve_approval(frame)
         elif kind == "clarify_response":
             from tools.clarify_gateway import resolve_gateway_clarify
-            ok = resolve_gateway_clarify(str(frame.get("clarify_id", "")), str(frame.get("response", "")))
+            # S1: чужую clarify-карточку не резолвим (владелец известен, user_id другой).
+            cid = str(frame.get("clarify_id") or "")
+            cowner = self._clarify_owner.get(cid)
+            quid = str(frame.get("user_id") or "gtw")
+            if cowner and quid != "gtw" and quid != cowner and self._sock_role.get(ws) != "admin":
+                ok = False
+            else:
+                ok = resolve_gateway_clarify(cid, str(frame.get("response", "")))
             await ws.send_json({"type": "clarify_ack", "clarify_id": frame.get("clarify_id"), "resolved": ok})
         elif kind == "stop":
             chat_id = str(frame.get("chat_id") or "main")
@@ -606,11 +658,19 @@ class GTWAdapter(BasePlatformAdapter):
                 message_id=_ms_id(), timestamp=datetime.datetime.now()))
         elif kind == "history":
             chat_id = str(frame.get("chat_id") or "main")
-            await ws.send_json({"type": "history", "chat_id": chat_id,
-                                "items": list(self._history.get(chat_id, []))})
+            # S1: чужую историю не отдаём (свой сокет получает items как раньше).
+            if self._foreign_frame(ws, chat_id, frame):
+                await ws.send_json({"type": "error", "error": "forbidden", "chat_id": chat_id})
+            else:
+                await ws.send_json({"type": "history", "chat_id": chat_id,
+                                    "items": list(self._history.get(chat_id, []))})
         elif kind == "session_info":
             chat_id = str(frame.get("chat_id") or "main")
-            await ws.send_json({"type": "session_info", "info": self._build_session_info(chat_id)})
+            # S1: чужую статистику сессии не отдаём.
+            if self._foreign_frame(ws, chat_id, frame):
+                await ws.send_json({"type": "error", "error": "forbidden", "chat_id": chat_id})
+            else:
+                await ws.send_json({"type": "session_info", "info": self._build_session_info(chat_id)})
         elif kind == "sessions":
             items = [self._build_session_info(cid) for cid in list(self._chat_stats)]
             items.sort(key=lambda x: x.get("lastActivity") or "", reverse=True)
@@ -688,6 +748,18 @@ class GTWAdapter(BasePlatformAdapter):
                 self._live_task.cancel()
             return
         self._live_viewers[ws] = chat_id
+        # S1: soft-гейт — смотреть live чужого чата нельзя (админ может).
+        # Регистрация зрителя уже произошла выше: кадры уходят только в _live_viewers,
+        # поэтому на legacy-поток (кадр без user_id/role, владелец неизвестен) это не влияет.
+        if frame.get("user_id") and not (
+                self._sock_role.get(ws) == "admin" or str(frame.get("role") or "") == "admin"
+                or str(frame["user_id"]) == self._chat_owner.get(chat_id)):
+            self._live_viewers.pop(ws, None)
+            with contextlib.suppress(Exception):
+                await ws.send_json({"type": "error", "error": "forbidden", "chat_id": chat_id})
+            if not self._live_viewers and self._live_task and not self._live_task.done():
+                self._live_task.cancel()
+            return
         if not self._live_task or self._live_task.done():
             self._live_task = asyncio.create_task(self._live_producer())
         with contextlib.suppress(Exception):
@@ -1010,6 +1082,11 @@ class GTWAdapter(BasePlatformAdapter):
         user_id = str(frame.get("user_id") or "gtw")
         user_name = str(frame.get("user_name") or user_id)
         role = str(frame.get("role") or "user")  # роль из подписанной куки (server.js)
+        # S1: фиксируем владельца чата по первому user_message (источник для _broadcast).
+        if user_id and user_id != "gtw":
+            self._chat_owner[chat_id] = user_id
+        elif chat_id not in self._chat_owner:
+            self._chat_owner[chat_id] = "gtw"  # legacy: кадр без user_id (бенч/старый клиент)
         st = self._stats(chat_id)
         st["user_id"] = user_id
         st["user_name"] = user_name
@@ -1081,6 +1158,15 @@ class GTWAdapter(BasePlatformAdapter):
         choice = str(frame.get("choice") or "deny")
         session_key = self._approval_sessions.get(request_id)
         if not session_key or choice not in ("once", "session", "always", "deny"):
+            return
+        # S1: чужую approval-карточку не резолвим (владелец известен, user_id другой).
+        aowner = self._approval_owner.get(request_id)
+        quid = str(frame.get("user_id") or "gtw")
+        # Кадр approval_response не содержит chat_id — владельца сокета берём из frame.role,
+        # который server.js инжектит из подписанной куки. Владелец "gtw" (неизвестен) не гейтится.
+        if aowner and quid != "gtw" and quid != aowner and str(frame.get("role") or "") != "admin":
+            await self._broadcast({"type": "approval_ack", "request_id": request_id,
+                                   "choice": choice, "resolved": False})
             return
         resolved = resolve_gateway_approval_card(session_key, choice, request_id,
                                                  actor_id=str(frame.get("user_id") or "gtw"),
@@ -1157,6 +1243,8 @@ class GTWAdapter(BasePlatformAdapter):
     async def _send_exec_approval_prompt(self, prompt) -> SendResult:
         if prompt.request_id:
             self._approval_sessions[prompt.request_id] = prompt.session_key
+            # S1: владелец карточки = владелец чата (или "gtw", если чат ещё не принадлежит никому).
+            self._approval_owner[prompt.request_id] = self._chat_owner.get(str(prompt.chat_id or ""), "gtw")
         await self._broadcast({
             "type": "approval_request",
             "chat_id": prompt.chat_id,
@@ -1179,6 +1267,8 @@ class GTWAdapter(BasePlatformAdapter):
                 multi = bool(getattr(get_pending(clarify_id), "multi_select", False))
             except Exception:
                 pass
+            # S1: владелец clarify-карточки = владелец чата (или "gtw", если неизвестен).
+            self._clarify_owner[str(clarify_id)] = self._chat_owner.get(str(chat_id or ""), "gtw")
             await self._broadcast({"type": "clarify_request", "chat_id": chat_id,
                                    "clarify_id": clarify_id, "question": question,
                                    "choices": list(choices), "multi_select": multi})

@@ -484,6 +484,17 @@ app.prepare().then(() => {
   function pipeToAdapter(client, session) {
     const login = String(session.login);
     const isAdmin = session.role === "admin";
+    // S1 (СЛОЙ 1): per-connection реестр чатов, которые ЭТО соединение вправе получать.
+    // Предзаполняем своими зарегистрированными чатами (реестр chats + usage_stats):
+    // вторая вкладка (cross-tab) получает кадры своих чатов без history-запроса.
+    // Админ без фильтра (регистрирует любой чат, к которому обращается).
+    const connChats = new Set(); // chat_id, которые это соединение вправе получать
+    if (!isAdmin) {
+      try {
+        for (const r of getDb().prepare("SELECT chat_id FROM chats WHERE login = ?").all(login)) connChats.add(String(r.chat_id));
+        for (const r of getDb().prepare("SELECT chat_id FROM usage_stats WHERE login = ?").all(login)) connChats.add(String(r.chat_id));
+      } catch {}
+    }
     const upstream = new WebSocket(GTW_WS_URL, {
       headers: { "X-GTW-Token": GTW_TOKEN },
       maxPayload: MAX_PAYLOAD,
@@ -527,7 +538,9 @@ app.prepare().then(() => {
       // B1: наполняем карту slug→display ДО первого session_info (иначе новый чат
       // restricted-юзера получает chatModels в slug-форме и гейт блокирует РАЗРЕШЁННУЮ
       // модель). Служебный bootstrap-кадр в браузер не форвардим (флаг bootModels).
-      try { upstream.send(JSON.stringify({ type: "models", chat_id: "main", user_id: login, user_name: login }), { binary: false }); } catch {}
+      // S1: role обязателен — слой 2 (adapter._broadcast) освобождает админа от фильтра
+      // приватных кадров только по _sock_role, а регистрируется он с кадра, несущего role.
+      try { upstream.send(JSON.stringify({ type: "models", chat_id: "main", user_id: login, user_name: login, role: isAdmin ? "admin" : "user" }), { binary: false }); } catch {}
       for (const { data, isBinary } of pending) {
         try { upstream.send(data, { binary: isBinary }); } catch {}
       }
@@ -624,6 +637,17 @@ app.prepare().then(() => {
           } catch {}
         }
       }
+      // S1 (СЛОЙ 1): downstream-фильтр — чужой чат не форвардим браузеру.
+      // Сниффинг выше (recordUsage/chatModels/артефакты) остаётся ДО фильтра:
+      // внутренний учёт не зависит от доставки клиенту. Кадры БЕЗ chat_id
+      // (hello, sessions, quota, error) и бинарные проходят как раньше.
+      if (!isAdmin && !isBinary) {
+        try {
+          const f = JSON.parse(outData.toString("utf8"));
+          const cid = String(f.chat_id || "");
+          if (cid && !connChats.has(cid)) return; // чужой чат — не форвардим
+        } catch {}
+      }
       if (client.readyState === WebSocket.OPEN) {
         try { client.send(outData, { binary: isBinary }); } catch {}
       }
@@ -644,7 +668,16 @@ app.prepare().then(() => {
       const type = frame && frame.type;
       if (type === "user_message") {
         const chatId = String(frame.chat_id || "main");
+        // S1: нельзя начинать ход в чужом чате — иначе chatOwners (и _chat_owner
+        // адаптера) перезаписывается на атакующего, а владелец теряет доступ к
+        // своему чату (forbidden на history/session_info) — DoS-захват.
+        const block = sessionInfoBlockOwner(chatId, login);
+        if (!isAdmin && block && block !== login) {
+          sendToClient({ type: "error", error: "forbidden" });
+          return null;
+        }
         chatOwners.set(chatId, login);
+        connChats.add(chatId); // S1: свой ход — это соединение вправе получать кадры чата
         const { limit, used } = quotaFor(login);
         if (limit !== null && used >= limit) {
           sendToClient({ type: "error", error: "quota_exceeded", limit, used });
@@ -739,19 +772,51 @@ app.prepare().then(() => {
         return raw;
       }
       if (type === "models") {
+        // S1: ownership-гейт + регистрация чата. Без гейта models-запрос регистрировал
+        // бы чужой chat_id в connChats и открывал downstream-поток. Незарегистрированный
+        // draft-чат (welcome-пикер) проходит: sessionInfoBlockOwner вернёт "".
+        const chatId = String(frame.chat_id || "main");
+        const block = sessionInfoBlockOwner(chatId, login);
+        if (!isAdmin && block && block !== login) {
+          sendToClient({ type: "error", error: "forbidden" });
+          return null;
+        }
+        connChats.add(chatId);
         // каталог доступен всем; для не-админа ответ фильтруется по белому списку
         return raw;
       }
       if (type === "set_model") {
+        // S1: ownership-гейт ПОСЛЕ allowlist-проверки (тот же порядок, что у history).
         if (!isAdmin && !modelAllowed(allowlistFor(login), String(frame.model || ""))) {
           sendToClient({ type: "error", error: "model_forbidden", model: String(frame.model || "") });
           return null;
         }
+        const chatId = String(frame.chat_id || "main");
+        const block = sessionInfoBlockOwner(chatId, login);
+        if (!isAdmin && block && block !== login) {
+          sendToClient({ type: "error", error: "forbidden" });
+          return null;
+        }
+        connChats.add(chatId);
         // login из куки — чтобы /model применился к ТОЙ ЖЕ сессии, что и user_message
         // (иначе override уходит в сессию "gtw", а ходы идут в сессии login -> модель откатывается)
         const parsed = JSON.parse(raw);
         parsed.user_id = login;
         parsed.user_name = login;
+        return JSON.stringify(parsed);
+      }
+      if (type === "history") {
+        // S1: НОВЫЙ гейт — раньше history проходил raw, отдавая чужую историю любому.
+        const chatId = String(frame.chat_id || "main");
+        const block = sessionInfoBlockOwner(chatId, login);
+        if (!isAdmin && block && block !== login) {
+          sendToClient({ type: "error", error: "forbidden" });
+          return null;
+        }
+        connChats.add(chatId);
+        const parsed = JSON.parse(raw);
+        parsed.user_id = login; // для слоя 2 (владелец на стороне адаптера)
+        parsed.role = isAdmin ? "admin" : "user"; // роль из куки, не из клиента
         return JSON.stringify(parsed);
       }
       if (type === "session_info") {
@@ -763,6 +828,7 @@ app.prepare().then(() => {
           sendToClient({ type: "error", error: "forbidden" });
           return null;
         }
+        connChats.add(chatId); // S1: разрешённый session_info открывает downstream чата
         const owner = chatOwnerLogin(chatId);
         if (owner) chatOwners.set(chatId, owner);
         return raw;
@@ -775,15 +841,32 @@ app.prepare().then(() => {
           sendToClient({ type: "error", error: "forbidden" });
           return null;
         }
+        connChats.add(chatId); // S1: зритель live вправе получать кадры этого чата
         const parsed = JSON.parse(raw);
         parsed.user_id = login; // login из подписанной куки, не из клиента
         parsed.user_name = login;
+        parsed.role = isAdmin ? "admin" : "user"; // слой 2: soft-гейт browser_live
         return JSON.stringify(parsed);
       }
       if (type === "stop") {
         // Сессия задаётся login'ом из куки (как user_message), не клиентским user_id.
+        const chatId = String(frame.chat_id || "main");
+        const block = sessionInfoBlockOwner(chatId, login);
+        if (!isAdmin && block && block !== login) {
+          sendToClient({ type: "error", error: "forbidden" });
+          return null;
+        }
+        connChats.add(chatId);
         const parsed = JSON.parse(raw);
         parsed.user_id = login;
+        return JSON.stringify(parsed);
+      }
+      if (type === "approval_response" || type === "clarify_response") {
+        // S1: инжектим user_id/role из куки (chat_id у этих кадров нет — гейтить
+        // нечего); слой 2 проверяет владельца request_id/clarify_id на стороне адаптера.
+        const parsed = JSON.parse(raw);
+        parsed.user_id = login;
+        parsed.role = isAdmin ? "admin" : "user";
         return JSON.stringify(parsed);
       }
       return raw;
