@@ -85,6 +85,6 @@ middleware, API-роуты и `server.js` (апгрейд `/ws`). Старые �
 ## Компоненты
 
 - `src/components/admin/`: AdminSidebar, AdminCard, AdminTable, AdminModal, StatusBadge
-- `src/components/ui/`: GlassCard, GlassButton (primary = `gradient-primary`,
-  как кнопка входа), GlassInput
+- `src/components/ui/`: GlassButton (primary = `gradient-primary`,
+  как кнопка входа), GlassInput (GlassCard удалён как мёртвый — админка на AdminCard)
 - типы: `src/types/admin.ts`

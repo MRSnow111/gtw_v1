@@ -31,11 +31,14 @@
 | `GTW_TOKEN` | server.js | — (обязателен) | токен апстрима, совпадает с токеном плагина |
 | `NODE_ENV` | server.js | — | `production` для боевого запуска |
 | `NEXT_PUBLIC_DEMO_MODE` | сборка | выкл | `1` = демо-режим (вшивается при сборке) |
-| `GTW_LOGIN` / `GTW_PASSWORD` | server.js | `demo` / `demo` | аккаунт владельца (роль `admin`, доступ к `/admin`) |
-| `GTW_USER_LOGIN` / `GTW_USER_PASSWORD` | server.js | — | опциональный аккаунт пользователя (роль `user`, только чат) |
-| `GTW_AUTH_SECRET` | server.js | = `GTW_TOKEN` | секрет подписи сессионной куки; можно не задавать |
-| `GTW_DATA_DIR` | server.js | `<cwd>/data` | каталог данных: SQLite-БД `gtw.db` (пользователи админки) |
-| `GTW_FILES_DIR` | server.js | `<GTW_DATA_DIR>/files` | корень файлового менеджера `/admin/files` |
+| `GTW_LOGIN` / `GTW_PASSWORD` | app/api/auth/login/route.ts, server.js | `demo` / — | аккаунт владельца (роль `admin`). **В production вход без `GTW_PASSWORD` запрещён** (500 `config_error`) — demo/demo в бою не работает |
+| `GTW_USER_LOGIN` / `GTW_USER_PASSWORD` | app/api/auth/login/route.ts | — | опциональный аккаунт пользователя (роль `user`, только чат) |
+| `GTW_AUTH_SECRET` | server.js | = `GTW_TOKEN` | секрет подписи сессионной куки; в production запуск без явного секрета прерывается (S11) |
+| `GTW_DATA_DIR` | server.js | `<cwd>/data` | каталог данных: SQLite-БД `gtw.db` (пользователи, лимиты, события) |
+| `GTW_FILESTORE_DIR` | server.js | `<GTW_DATA_DIR>/filestore` | хранилище загруженных файлов/артефактов; корень проверки путей `storage_path` (S7) |
+| `GTW_FILES_DIR` | app/api/admin/files/route.ts | `<GTW_DATA_DIR>/files` | корень файлового менеджера `/admin/files` |
+| `GTW_ARTIFACT_ROOTS` | server.js | — | `:`-список доп. корней артефактов (для бенча/тестов) |
+| `HERMES_HOME` | server.js | `~/.hermes` | корень Hermes: источники артефактов для предпросмотра |
 
 Требуется **Node ≥ 22.13** (встроенный `node:sqlite` без флага; на хосте
 v22.22.1 — подходит). Каталог `data/` создаётся автоматически при первом
@@ -77,23 +80,96 @@ npm start            # GTW_TOKEN не нужен
 ```
 
 Разработка с живым шлюзом: `npm run dev:ws` (NODE_ENV=development node server.js).
-Проверка живости: `curl http://127.0.0.1:3000/health` → `{"ok":true}`.
+
+Проверка живости: **отдельного `/health` у фронт-сервера нет**. Есть
+админ-гейченный `GET /api/admin/health` (нужна кука `gtw-auth` с ролью `admin`;
+curl без куки получит 401) — он отдаёт счётчики сессий и TCP-пробу WS-порта
+плагина. Для внешнего healthcheck'а: `curl -I http://127.0.0.1:3000/`
+(200/302) плюс проба апстрима `curl -s http://127.0.0.1:8765/health` →
+`{"ok":true}` — это эндпоинт уже адаптера, loopback.
+
+## systemd (боевой запуск)
+
+Фронт держится пользовательским юнитом `gtw.service` (пользователь `hermes`,
+WorkingDirectory = рабочий клон репозитория). Секреты — **только** из
+`EnvironmentFile`, в самом юните их не писать:
+
+`~/.config/systemd/user/gtw.service`:
+
+```ini
+[Unit]
+Description=GTW web gateway (Next.js + WS proxy)
+After=network-online.target
+
+[Service]
+WorkingDirectory=/home/hermes/gtw_v1
+EnvironmentFile=/home/hermes/gtw.env
+Environment=NODE_ENV=production
+Environment=PORT=3000
+ExecStart=/usr/bin/node server.js
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=default.target
+```
+
+`~/gtw.env` (`chmod 600`, в git не попадает; переменные — см. таблицу выше):
+
+```bash
+GTW_TOKEN=…            # тот же, что у плагина в ~/.hermes/.env
+GTW_AUTH_SECRET=…
+GTW_LOGIN=…
+GTW_PASSWORD=…
+GTW_WS_URL=ws://127.0.0.1:8765/ws
+GTW_DATA_DIR=/home/hermes/gtw-data
+```
+
+```bash
+systemctl --user daemon-reload
+systemctl --user enable --now gtw.service
+systemctl --user status gtw.service --no-pager
+```
+
+Лог: `journalctl --user -u gtw.service -n 50`. Либо lingering, либо
+`loginctl enable-linger hermes`, иначе сервис не переживёт logout/ребут.
+
+**После каждой `npm run build` обязателен рестарт**: `systemctl --user restart
+gtw.service`. `server.js` отдаёт собранный `.next` из своего процесса, поэтому
+без рестарта браузер получает stale-build (500 на ассетах) — это ловилось в бою
+неоднократно.
 
 ## Авторизация
 
-- Вход: `/api/auth/login` ставит httpOnly-куку `gtw-auth` (TTL 7 дней).
-- Демо-учётка: `demo` / `demo` — **сменить перед боевым деплоем**
-  (`app/api/auth/login/route.ts`).
-- Middleware не пускает без куки на `/chat`; `/ws` проверяет куку при апгрейде.
+- Вход: `/api/auth/login` ставит httpOnly-куку `gtw-auth` (подписанный токен с
+  ролью, TTL 7 дней).
+- **Креды — только через окружение**: `GTW_LOGIN`/`GTW_PASSWORD` (владелец,
+  роль `admin`), опционально `GTW_USER_LOGIN`/`GTW_USER_PASSWORD` (роль `user`).
+  Править `app/api/auth/login/route.ts` под боевые пароли не нужно и нельзя —
+  секреты не должны попадать в репозиторий. В production без `GTW_PASSWORD`
+  вход отдаёт 500 `config_error` (демо-входа `demo`/`demo` в бою нет; он жив
+  только в dev).
+- Обычные пользователи заводятся в админке (`/admin/users`), хранятся в
+  SQLite `GTW_DATA_DIR/gtw.db` (scrypt-хэши).
+- Middleware не пускает без куки на `/chat`; `/ws` проверяет куку при апгрейде
+  (плюс сверка с живой учёткой, Origin и роль — фиксы волны 1).
+- После обновления формата куки (`mock.<ts>` со старых версий) нужен повторный вход.
 
 ## Порядок ввода в бой
 
-1. Поднять gateway с плагином `gtw` (конфиг выше), перезапустить:
-   `hermes -p default gateway restart`. Проверить: `curl 127.0.0.1:8765/health`.
-2. Собрать фронт без `NEXT_PUBLIC_DEMO_MODE`, запустить `server.js` с
-   `GTW_TOKEN`, совпадающим с токеном плагина.
-3. Сменить демо-креды, выставить наружу только порт Next-сервера
-   (реверс-прокси/TLS на хосте). Порт 8765 наружу не открывать.
+1. Поднять gateway с плагином `gtw` (конфиг и установка — `plugin/README.md`),
+   перезапустить gateway. Проверить: `curl -s 127.0.0.1:8765/health` →
+   `{"ok":true}` (у самого Next-сервера `/health` нет — см. выше).
+2. Собрать фронт без `NEXT_PUBLIC_DEMO_MODE` и запустить `server.js` под
+   `gtw.service` с `GTW_TOKEN`/`GTW_AUTH_SECRET`/`GTW_LOGIN`/`GTW_PASSWORD` из
+   `EnvironmentFile` (`GTW_TOKEN` обязан совпадать с токеном плагина).
+3. Убедиться, что наружу торчит только порт Next-сервера (реверс-прокси/TLS на
+   хосте). Порт 8765 наружу не открывать; `GTW_BIND` оставить `127.0.0.1`.
+4. Проверить вход в UI (роль `admin` у владельца), отправку сообщения и
+   `/api/admin/health`.
+5. Если нужен live-просмотр браузера агента — поднять host-мост
+   `gtw-cdp-bridge.service` и задать env продюсеру (раздел «live-браузер» в
+   `plugin/README.md`).
 
 ## Траблшутинг
 

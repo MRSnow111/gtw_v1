@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef } from "react";
+import Link from "next/link";
 import { motion } from "framer-motion";
 import { RefreshCw } from "lucide-react";
 import { useAgentStore } from "@/stores/agentStore";
@@ -59,12 +60,12 @@ export function MessageList({ chatId }: MessageListProps) {
     return (
       <div className="flex h-full flex-col items-center justify-center gap-4">
         <p className="text-sm text-[rgba(220,235,230,0.7)]">Чат не найден</p>
-        <a
+        <Link
           href="/chat"
           className="glass-medium rounded-xl px-4 py-2 text-[13px] text-foreground transition-colors hover:border-mint/40"
         >
           На главную
-        </a>
+        </Link>
       </div>
     );
   }

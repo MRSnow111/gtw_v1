@@ -4,9 +4,10 @@
 Проверяет: /health -> WS-авторизация -> hello -> реальное сообщение агенту -> ответ.
 Токен читается из ~/.hermes/.env (или переменной GTW_TOKEN) и НИКОГДА не печатается.
 
-Запуск (на хосте, где работает gateway):
-  python3 probe.py
-  python3 probe.py --port 8765 --timeout 240 --chat gtw-probe --text "..."
+Запуск (на хосте, где работает gateway; файл лежит в scripts/ репозитория GTW,
+в каталог плагина ~/.hermes/plugins/gtw его НЕ кладут):
+  python3 scripts/probe.py
+  python3 scripts/probe.py --port 8765 --timeout 240 --chat gtw-probe --text "..."
 
 Внимание: пробник отправляет агенту НАСТОЯЩЕЕ сообщение (сессия gtw-probe)
 и расходует токены модели. Approval-запросы пробник отклоняет (deny).
@@ -51,7 +52,7 @@ async def run(args) -> int:
     except ImportError:
         print("ОШИБКА: в этом python нет aiohttp.")
         print("Запустите пробник питоном Hermes, например:")
-        print("  ~/.hermes/tools/python-*/bin/python3 probe.py")
+        print("  ~/.hermes/tools/python-*/bin/python3 scripts/probe.py")
         print("или установите: python3 -m pip install aiohttp")
         return 2
 

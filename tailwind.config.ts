@@ -56,7 +56,6 @@ const config = {
         },
         // текстовые токены (var из globals.css) — не путать с shadcn `secondary`
         dim: "var(--text-secondary)",
-        faint: "var(--text-muted)",
         // цветовые акценты
         aqua: "#5ED0AE",
         lagoon: "#8AB8E8",

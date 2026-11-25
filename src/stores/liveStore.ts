@@ -30,7 +30,7 @@ const uid = (p: string) => `${p}${Date.now().toString(36)}${Math.random().toStri
 // message/message_edit БЕЗ metadata (у GTW пустой _progress_metadata) — это шаги
 // инструмента, НЕ финальный ответ. Прячем их в statusNotes: compact-пользователь не
 // видит детали (только строка статуса), admin — список шагов в «Рассуждениях».
-// Regex совпадает с plugin/probe.py::_TOOL_PROGRESS (проверен на живых кадрах).
+// Regex совпадает с scripts/probe.py::_TOOL_PROGRESS (проверен на живых кадрах).
 const TOOL_PROGRESS_RE =
   /^\s*(?:💻|🔧|🛠|📁|📂|🌐|🔍|🔎|📄|📝|⚙|🖥|📦|🧰|🗑|✏|📋|🧪|🚀|💾|📥|📤|🔨|📡|📚|📖|🗂|📰)\uFE0F?\s/;
 const isToolProgress = (text: string) => TOOL_PROGRESS_RE.test(text || "");

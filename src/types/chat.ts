@@ -9,4 +9,3 @@ export interface Chat {
   status?: "active" | "archived" | "deleted";
 }
 
-export type ChatStatus = "connected" | "disconnected" | "reconnecting" | "thinking" | "generating" | "idle";

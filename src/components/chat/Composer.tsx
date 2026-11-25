@@ -43,7 +43,6 @@ export function Composer({ chatId }: ComposerProps) {
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const offline = status !== "connected";
-  const queueCount = 0;
   const readyAtts = attachments.filter((a) => a.status === "ready");
   const uploading = attachments.some((a) => a.status === "uploading");
 
@@ -239,8 +238,7 @@ export function Composer({ chatId }: ComposerProps) {
             animate={{ opacity: 1, y: 0 }}
             className="glass-medium mb-2 flex items-center justify-center gap-2 rounded-xl border border-amber-300/30 bg-amber-400/10 px-3 py-1.5 text-[11.5px] text-amber-200/90"
           >
-            Соединение потеряно.
-            {queueCount > 0 ? ` ${queueCount} сообщений в очереди` : " Переподключение…"}
+            Соединение потеряно. Переподключение…
           </motion.div>
         )}
 

@@ -29,7 +29,7 @@ const KEYWORDS =
 function highlightLine(line: string, lang: string): React.ReactNode {
   const commentRe = lang === "python" ? /(#.*)$/ : /(\/\/.*$)/;
   const parts: React.ReactNode[] = [];
-  let rest = line;
+  const rest = line;
   let key = 0;
 
   const pushPlain = (text: string) => {

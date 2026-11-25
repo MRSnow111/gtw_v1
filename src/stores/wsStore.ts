@@ -4,14 +4,11 @@ export type WsStatus = "connecting" | "connected" | "reconnecting" | "disconnect
 
 interface WsStore {
   status: WsStatus;
-  ws: WebSocket | null;
   setStatus: (status: WsStatus) => void;
-  setWs: (ws: WebSocket | null) => void;
 }
 
+// Волна 3: поля ws/setWs удалены — 0 использований (сокет живёт в src/lib/gtwSocket.ts).
 export const useWsStore = create<WsStore>((set) => ({
   status: "disconnected",
-  ws: null,
   setStatus: (status) => set({ status }),
-  setWs: (ws) => set({ ws }),
 }));

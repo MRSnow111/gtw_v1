@@ -1,7 +1,7 @@
 name: gtw-platform
 label: GTW
 kind: platform
-version: 0.1.0
+version: 0.3.0
 description: >
   GTW (Gateway To Hermes) web-chat adapter. Runs a local WebSocket server
   inside the Hermes gateway; the GTW Next.js frontend connects to it
@@ -33,4 +33,20 @@ optional_env:
   - name: GTW_HOME_CHANNEL
     description: "Chat id for cron / notification delivery (defaults to 'main')"
     prompt: "Home chat id (or empty)"
+    password: false
+  - name: GTW_BROWSER_CDP
+    description: "Explicit CDP page endpoint for live browser viewing: ws://host/devtools/page/<id> (fixed tab; skips auto-discovery)"
+    prompt: "Live-browser CDP page URL (or empty)"
+    password: false
+  - name: GTW_BROWSER_DEBUG_PORT
+    description: "CDP port the live producer connects to (through the CDP bridge; typically 9333)"
+    prompt: "Live-browser CDP port (or empty)"
+    password: false
+  - name: GTW_BROWSER_CDP_HOST
+    description: "Address of the CDP bridge host daemon (default: 127.0.0.1 — agent browser lives in the sandbox container)"
+    prompt: "CDP bridge host (default 127.0.0.1)"
+    password: false
+  - name: GTW_BROWSER_PROFILE
+    description: "Chromium profile dir of the agent browser; DevToolsActivePort is read from it when GTW_BROWSER_DEBUG_PORT is unset"
+    prompt: "Agent browser profile dir (or empty)"
     password: false

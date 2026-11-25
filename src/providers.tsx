@@ -1,32 +1,15 @@
 "use client";
 
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { ReactQueryDevtools } from "@tanstack/react-query-devtools";
 import { ThemeProvider as NextThemesProvider } from "next-themes";
 import { Toaster } from "sonner";
-import { type ReactNode, useState } from "react";
+import { type ReactNode } from "react";
 
+// Волна 3: обёртка @tanstack/react-query удалена — useQuery/useMutation в коде 0 (мёртвый слой).
 export function Providers({ children }: { children: ReactNode }) {
-  const [queryClient] = useState(
-    () =>
-      new QueryClient({
-        defaultOptions: {
-          queries: {
-            staleTime: 60 * 1000,
-            refetchOnWindowFocus: false,
-            retry: 1,
-          },
-        },
-      })
-  );
-
   return (
     <NextThemesProvider attribute="class" defaultTheme="dark" enableSystem={false} forcedTheme="dark">
-      <QueryClientProvider client={queryClient}>
-        {children}
-        <Toaster position="top-right" expand={true} richColors />
-        <ReactQueryDevtools initialIsOpen={false} />
-      </QueryClientProvider>
+      {children}
+      <Toaster position="top-right" expand={true} richColors />
     </NextThemesProvider>
   );
 }
