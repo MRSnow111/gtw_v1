@@ -29,9 +29,13 @@ export default function AdminLogsPage() {
   const [total, setTotal] = useState(0);
   const [hasMore, setHasMore] = useState(false);
   const [expanded, setExpanded] = useState<string | null>(null);
+  const [loadingMore, setLoadingMore] = useState(false);
 
-  const fetchLogs = async (pageNum: number, level: LogLevel) => {
-    setLoading(true);
+  // Волна 4 (A2): данные — реальные события /api/admin/logs; append=true
+  // дописывает следующую страницу (раньше «Загрузить ещё» заменнял список).
+  const fetchLogs = async (pageNum: number, level: LogLevel, append = false) => {
+    if (append) setLoadingMore(true);
+    else setLoading(true);
     try {
       const params = new URLSearchParams({
         page: String(pageNum),
@@ -40,24 +44,27 @@ export default function AdminLogsPage() {
       });
       const res = await fetch(`/api/admin/logs?${params}`);
       const data = await res.json();
-      setLogs(data.logs);
-      setTotal(data.total);
-      setHasMore(data.hasMore);
+      const rows = Array.isArray(data.logs) ? data.logs : [];
+      setLogs((prev) => (append ? [...prev, ...rows] : rows));
+      setTotal(data.total ?? 0);
+      setHasMore(!!data.hasMore);
     } catch {
-      setLogs([]);
+      if (!append) setLogs([]);
     } finally {
       setLoading(false);
+      setLoadingMore(false);
     }
   };
 
   useEffect(() => {
+    // фильтр меняется только клипом по чипу, который сам делает setPage(1)
     fetchLogs(1, filter);
   }, [filter]);
 
   const handleLoadMore = () => {
     const nextPage = page + 1;
     setPage(nextPage);
-    fetchLogs(nextPage, filter);
+    fetchLogs(nextPage, filter, true);
   };
 
   const formatDate = (iso: string) => {
@@ -84,7 +91,7 @@ export default function AdminLogsPage() {
       <div>
         <h1 className="text-xl font-semibold text-[rgba(220,235,230,0.95)]">Логи</h1>
         <p className="text-sm text-[rgba(165,187,179,0.6)] mt-1">
-          Журнал событий (хранение: 30 дней)
+          Журнал событий шлюза (последние 500 записей)
         </p>
       </div>
 
@@ -155,9 +162,10 @@ export default function AdminLogsPage() {
         <div className="flex justify-center">
           <button
             onClick={handleLoadMore}
-            className="px-4 py-2 rounded-full text-xs text-[rgba(143,184,174,0.6)] hover:text-[rgba(220,235,230,0.8)] hover:bg-[rgba(143,184,174,0.08)] transition-all"
+            disabled={loadingMore}
+            className="px-4 py-2 rounded-full text-xs text-[rgba(143,184,174,0.6)] hover:text-[rgba(220,235,230,0.8)] hover:bg-[rgba(143,184,174,0.08)] transition-all disabled:opacity-50"
           >
-            Загрузить ещё ({total - logs.length} осталось)
+            {loadingMore ? "Загрузка…" : `Загрузить ещё (${Math.max(0, total - logs.length)} осталось)`}
           </button>
         </div>
       )}

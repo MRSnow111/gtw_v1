@@ -264,7 +264,17 @@ function FileBody({
 /* ─────────── панель ─────────── */
 
 export function ArtifactPanel({ className }: { className?: string }) {
-  const { artifacts, activeChatId, retryArtifact, removeArtifact, sendMessage, chats } = useAgentStore();
+  // Точечные селекторы zustand (аудит O1/B16): панель подписана на артефакты, активный
+  // чат и project-идентификатор (примитив вместо всего массива чатов); экшены —
+  // стабильные ссылки. Деструктуризация стора перерисовывала панель на каждый кадр WS.
+  const artifacts = useAgentStore((s) => s.artifacts);
+  const activeChatId = useAgentStore((s) => s.activeChatId);
+  const activeProjectId = useAgentStore(
+    (s) => s.chats.find((c) => c.id === s.activeChatId)?.projectId ?? null
+  );
+  const retryArtifact = useAgentStore((s) => s.retryArtifact);
+  const removeArtifact = useAgentStore((s) => s.removeArtifact);
+  const sendMessage = useAgentStore((s) => s.sendMessage);
   const projects = useProjectStore((s) => s.projects);
   const artifactWidth = useUiStore((s) => s.artifactWidth);
   const toggleArtifactWide = useUiStore((s) => s.toggleArtifactWide);
@@ -280,7 +290,6 @@ export function ArtifactPanel({ className }: { className?: string }) {
   const [pendingDelete, setPendingDelete] = useState<Artifact | null>(null);
   const [deleting, setDeleting] = useState(false);
 
-  const activeProjectId = chats.find((c) => c.id === activeChatId)?.projectId ?? null;
   const activeProject = projects.find((p) => p.id === activeProjectId) ?? null;
 
   const chatArtifacts = useMemo(

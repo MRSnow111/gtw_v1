@@ -19,10 +19,28 @@ import { useModelStore } from "@/stores/modelStore";
  * запрашивается у шлюза (history).
  */
 
-const SILENCE_MS = 2500; // тишина после последнего кадра => ход завершён
+// Тишина после последнего кадра => ход завершён. 2500 мс рвал живую генерацию:
+// долгая пауза инструмента (tool без status-кадров) закрывала ход, а следующий
+// typing создавал ВТОРОЙ ход — в ленте появлялся разрыв «генерация».
+const SILENCE_MS = 10000;
+// Ход, закрытый именно таймером тишины (а не концом сообщения), ещё живой:
+// если кадр пришёл в этом окне — переоткрываем ЕГО, а не создаём новый ход.
+const SILENCE_REOPEN_MS = 30000;
 const silenceTimers = new Map<string, ReturnType<typeof setTimeout>>();
 // Момент явной остановки пользователем: служебные кадры после stop не воскрешают ход.
 const stoppedAt = new Map<string, number>();
+// doneReason хода, закрытого тишиной: chatId → {turnId, at}. Тип Turn живёт в
+// src/lib/demoData.ts (вне зоны волны 4 / агента B), поэтому причина хранится
+// здесь, а не полем хода — семантика та же: «закрыт таймером, можно переоткрыть».
+const silenceDone = new Map<string, { turnId: string; at: number }>();
+// Момент/поколение history-запроса per-chat: кадр history не должен затирать
+// локальные ходы, созданные ПОСЛЕ запроса (гонка loadTurns ↔ sendMessage).
+const historyReqAt = new Map<string, number>();
+const historyGen = new Map<string, number>();
+const HISTORY_TIMEOUT_MS = 6000;
+// history-запрос старше этого возраста считаем зависшим: повторный вход в чат
+// сбрасывает флаг и перезапрашивает историю, не дожидаясь 6-секундного таймаута.
+const HISTORY_STALE_MS = 1500;
 
 const uid = (p: string) => `${p}${Date.now().toString(36)}${Math.random().toString(36).slice(2, 7)}`;
 
@@ -60,6 +78,28 @@ function lastAgentTurn(chatId: string): Turn | undefined {
   return last?.kind === "agent" ? last : undefined;
 }
 
+/**
+ * Слияние снимка истории со СВЕЖИМИ локальными ходами (созданными после отправки
+ * history-запроса). Дедуп по id/messageId, порядок по времени создания: локальные
+ * оптимистичные ходы всегда новее снапшота, поэтому дописываются в хвост.
+ */
+function mergeTurns(history: Turn[], fresh: Turn[]): Turn[] {
+  const ids = new Set(history.map((t) => t.id));
+  const msgIds = new Set<string>(history.map((t) => t.messageId).filter(Boolean) as string[]);
+  // Дедуп только по идентичностям (id/messageId): «свежие» ходы созданы ПОСЛЕ
+  // снимка, поэтому по тексту их сверять нельзя — два одинаковых сообщения подряд
+  // были бы ошибочно схлопнуты в одно.
+  const keep = fresh.filter((t) => !ids.has(t.id) && !(t.messageId && msgIds.has(t.messageId)));
+  if (!keep.length) return history;
+  const out = [...history];
+  for (const t of keep) {
+    const i = out.findIndex((x) => x.createdAt > t.createdAt);
+    if (i === -1) out.push(t);
+    else out.splice(i, 0, t);
+  }
+  return out;
+}
+
 /** Гарантирует running-ход агента в конце ленты (создаёт, если нужно). */
 function ensureAgentTurn(chatId: string): Turn {
   const last = lastAgentTurn(chatId);
@@ -68,6 +108,15 @@ function ensureAgentTurn(chatId: string): Turn {
   // воскрешать running-ход — новый ход создаёт только user_message.
   const sa = stoppedAt.get(chatId);
   if (sa !== undefined && Date.now() - sa < 15000 && last) return last;
+  // Ход закрыт ТАЙМЕРОМ ТИШИНЫ (doneReason 'silence'), а не концом сообщения:
+  // значит генерация просто лагала — переоткрываем его, иначе следующий typing
+  // создаст второй ход и лента разорвётся («генерация» посередине ответа).
+  const sd = silenceDone.get(chatId);
+  if (last && sd && sd.turnId === last.id && Date.now() - sd.at < SILENCE_REOPEN_MS) {
+    silenceDone.delete(chatId);
+    patchTurn(chatId, last.id, { agentState: "running" });
+    return { ...last, agentState: "running" };
+  }
   const turn: Turn = {
     id: uid("ta"), kind: "agent", createdAt: Date.now(),
     thinkingMs: null, tools: [], answer: "", revealed: 0, agentState: "running",
@@ -82,6 +131,8 @@ function clearSilence(chatId: string) {
   const t = silenceTimers.get(chatId);
   if (t) clearTimeout(t);
   silenceTimers.delete(chatId);
+  // любой явный конец/пауза ожидания снимает метку «ход закрыт тишиной»
+  silenceDone.delete(chatId);
 }
 
 /** Ход считается завершённым, если шлюз замолчал и нет ожидания пользователя. */
@@ -96,6 +147,9 @@ function armSilence(chatId: string) {
       agentState: "done",
       thinkingMs: t.thinkingMs ?? Math.max(0, Date.now() - t.createdAt),
     });
+    // doneReason='silence': ход закрыт таймером, а не концом сообщения — следующий
+    // кадр в окне SILENCE_REOPEN_MS переоткроет его, а не создаст второй ход.
+    silenceDone.set(chatId, { turnId: t.id, at: Date.now() });
     // обновляем статистику сессии (и учёт токенов в прокси) после хода
     gtwSocket.send({ type: "session_info", chat_id: chatId });
   }, SILENCE_MS));
@@ -348,6 +402,7 @@ function onFrame(frame: GtwServerFrame) {
     }
 
     case "history": {
+      const chatId = frame.chat_id;
       const turns: Turn[] = frame.items.map((it, i) => {
         const ts = Date.parse(it.ts) || Date.now();
         if (it.role === "user") {
@@ -360,12 +415,27 @@ function onFrame(frame: GtwServerFrame) {
         };
       });
       useLiveStore.setState((s) => {
-        const { [frame.chat_id]: _drop, ...restLoading } = s.loadingChats;
+        const { [chatId]: _drop, ...restLoading } = s.loadingChats;
+        // Гонка loadTurns ↔ sendMessage: снимок истории сделан ДО локальных ходов,
+        // поэтому ходы, созданные после отправки запроса, перезаписью терялись
+        // (сообщение пользователя исчезало из ленты). Merge: история + свежие
+        // локальные ходы, дедуп по id/messageId, порядок по времени создания.
+        // Живой running-ход не выбрасываем никогда: иначе запоздалый history
+        // «съедает» идущую генерацию, а следующий кадр создаст второй ход.
+        const reqAt = historyReqAt.get(chatId);
+        const prev = s.turnsByChat[chatId] || [];
+        const fresh = prev.filter(
+          (t) => (reqAt !== undefined && t.createdAt >= reqAt) ||
+            (t.kind === "agent" && t.agentState === "running")
+        );
+        const merged = fresh.length ? mergeTurns(turns, fresh) : turns;
         return {
           loadingChats: restLoading,
-          turnsByChat: { ...s.turnsByChat, [frame.chat_id]: turns },
+          turnsByChat: { ...s.turnsByChat, [chatId]: merged },
         };
       });
+      // historyReqAt НЕ удаляем: на чат мог уйти повторный запрос (переоткрытие),
+      // и запоздалый ответ обязан так же щадить свежие локальные ходы.
       break;
     }
 
@@ -476,6 +546,19 @@ export const useLiveStore = create<DemoState>()((set, get) => ({
       setActiveChat: (id) => {
         // переход к чату сбрасывает черновой выбор модели с welcome-экрана
         useModelStore.getState().setPendingModel(null);
+        // B4 (аудит B2): history-запрос мог потеряться (рестарт шлюза/офлайн) —
+        // флаг loadingChats держали до 6-секундного таймаута, и повторный вход в
+        // чат показывал скелетон вместо мгновенного перезапроса. Сбрасываем
+        // зависший флаг (запрос старше HISTORY_STALE_MS) — MessageList тут же
+        // дёрнет loadTurns заново.
+        const s = get();
+        const reqAt = id ? historyReqAt.get(id) : undefined;
+        if (id && s.loadingChats[id] && !s.turnsByChat[id] &&
+            reqAt !== undefined && Date.now() - reqAt > HISTORY_STALE_MS) {
+          const { [id]: _drop, ...restLoading } = s.loadingChats;
+          set({ activeChatId: id, loadingChats: restLoading });
+          return;
+        }
         set({ activeChatId: id });
       },
 
@@ -501,11 +584,26 @@ export const useLiveStore = create<DemoState>()((set, get) => ({
       },
 
       loadTurns: (chatId) => {
-        if (get().turnsByChat[chatId] || get().loadingChats[chatId]) return;
+        const cur = get();
+        if (cur.turnsByChat[chatId]) return;
+        if (cur.loadingChats[chatId]) {
+          // B4 (аудит B2): запрос истории мог потеряться (офлайн/рестарт шлюза) —
+          // раньше флаг держали до 6-секундного таймаута и скелетон висел. Повторный
+          // вход в чат сбрасывает зависший флаг и уходит на перезапрос немедленно.
+          const reqAt = historyReqAt.get(chatId);
+          if (reqAt === undefined || Date.now() - reqAt <= HISTORY_STALE_MS) return;
+          const { [chatId]: _drop, ...rest } = cur.loadingChats;
+          set({ loadingChats: rest });
+        }
+        const gen = (historyGen.get(chatId) ?? 0) + 1;
+        historyGen.set(chatId, gen);
+        historyReqAt.set(chatId, Date.now());
         set((s) => ({ loadingChats: { ...s.loadingChats, [chatId]: true } }));
         gtwSocket.send({ type: "history", chat_id: chatId });
         // если шлюз не ответил (офлайн/рестарт) — не держим скелетон вечно
         setTimeout(() => {
+          // более свежий запрос в пути: старый таймаут не трогает его флаг
+          if (historyGen.get(chatId) !== gen) return;
           const s = useLiveStore.getState();
           if (!s.loadingChats[chatId]) return;
           const { [chatId]: _drop, ...restLoading } = s.loadingChats;
@@ -513,11 +611,14 @@ export const useLiveStore = create<DemoState>()((set, get) => ({
             loadingChats: restLoading,
             turnsByChat: { ...s.turnsByChat, [chatId]: s.turnsByChat[chatId] || [] },
           });
-        }, 6000);
+        }, HISTORY_TIMEOUT_MS);
       },
 
       sendMessage: (chatId, text, attachments, initialModel) => {
         stoppedAt.delete(chatId);
+        // новое сообщение пользователя = новый ход: ход, закрытый таймером тишины,
+        // не должен переоткрываться ответом на этот запрос
+        silenceDone.delete(chatId);
         const userTurn: Turn = {
           id: uid("tu"), kind: "user", createdAt: Date.now(), text,
           attachments: attachments?.length ? attachments : undefined, status: "done",
@@ -594,6 +695,10 @@ export const useLiveStore = create<DemoState>()((set, get) => ({
             ? { ...t.approval, state: choice === "deny" ? "denied" : "allowed" }
             : t.approval,
         }));
+        // B4 (аудит B4): approval_request снимал таймер тишины, а вооружали мы его
+        // только по approval_ack — потерянный ack навсегда вешал running-ход. После
+        // решения пользователя вооружаем таймер сами (pending-блока уже нет).
+        armSilence(chatId);
       },
 
       answerClarify: (chatId, turnId, clarifyId, response) => {
@@ -601,6 +706,8 @@ export const useLiveStore = create<DemoState>()((set, get) => ({
         patchTurn(chatId, turnId, (t) => ({
           clarify: t.clarify ? { ...t.clarify, state: "answered" as const, answer: response } : t.clarify,
         }));
+        // тот же смысл, что у decide: потерянный clarify_ack не вешает ход
+        armSilence(chatId);
       },
 
       createChat: (projectId) => {
@@ -622,6 +729,10 @@ export const useLiveStore = create<DemoState>()((set, get) => ({
 
       deleteChat: (id) => {
         clearSilence(id);
+        // служебные per-chat карты не должны переживать удалённый чат
+        stoppedAt.delete(id);
+        historyReqAt.delete(id);
+        historyGen.delete(id);
         set((s) => ({
           chats: s.chats.filter((c) => c.id !== id),
           artifacts: s.artifacts.filter((a) => a.chatId !== id),

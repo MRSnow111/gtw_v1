@@ -136,12 +136,57 @@ export function addUser(login: string, password: string, role: Role): StoredUser
   return { login, role, createdAt, lastLogin: null, source: "db" };
 }
 
+/**
+ * Волна 4 (A1, аудит server-core.md §2.6): пер-user таблицы, чистимые при
+ * удалении аккаунта. Без каскада пересоздание того же логина молча
+ * наследовало лимиты, белые списки, чужие чаты/файлы и расход токенов.
+ * Схема сверена с src/lib/db.ts (таблицы messages нет).
+ *   events  — журнал шлюза (аудит), НЕ чистится: запись «Удалён X» должна
+ *             пережить удаление самой учётки;
+ *   файлы на диске — НЕ удаляются (отдельное решение владельца, см.
+ *             wave4-admin.md), чистится только реестр в БД.
+ */
+const USER_DATA_TABLES = [
+  "user_limits",
+  "user_models",
+  "chats",
+  "files",
+  "usage_stats",
+  "projects",
+  "sessions",
+] as const;
+
+/** Суммарное число удалённых по login строк в пер-user таблицах (для каскада/теста). */
+export function purgeUserData(login: string): number {
+  const db = getDb();
+  let removed = 0;
+  // Имена таблиц — статический список выше, интерполяция безопасна.
+  for (const table of USER_DATA_TABLES) {
+    const r = db.prepare(`DELETE FROM ${table} WHERE login = ?`).run(login);
+    removed += Number(r.changes);
+  }
+  return removed;
+}
+
 export function removeUser(login: string): boolean {
   if (login === ADMIN_LOGIN) {
     throw new Error("Системного администратора удалить нельзя");
   }
-  const res = getDb().prepare("DELETE FROM users WHERE login = ?").run(login);
-  return Number(res.changes) > 0;
+  const db = getDb();
+  db.exec("BEGIN");
+  try {
+    purgeUserData(login);
+    const res = db.prepare("DELETE FROM users WHERE login = ?").run(login);
+    db.exec("COMMIT");
+    return Number(res.changes) > 0;
+  } catch (e) {
+    try {
+      db.exec("ROLLBACK");
+    } catch {
+      /* соединение уже закрыто/транзакция сброшена — скрываем за первопричиной */
+    }
+    throw e;
+  }
 }
 
 export function verifyUser(login: string, password: string): { login: string; role: Role } | null {

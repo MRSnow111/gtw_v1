@@ -92,6 +92,111 @@ export function recentEvents(limit = 15): EventRow[] {
     .all(limit) as EventRow[];
 }
 
+// ── Волна 4 (A2): админский журнал на реальных событиях ──
+
+export type EventLevel = "info" | "warn" | "error" | "debug";
+
+interface EventMeta {
+  level: EventLevel;
+  label: string;
+  source: string;
+}
+
+/**
+ * Человекочитаемое описание известных видов событий. Всё, чего нет здесь,
+ * уходит в UI как info/gateway с сырым kind — честная деградация вместо
+ * фейковых логов. Уровней error/debug пока нет у реальных источников
+ * (логин/файлы/проекты/лимиты) — фильтр остаётся рабочим на будущее.
+ */
+const EVENT_META: Record<string, EventMeta> = {
+  login_ok: { level: "info", label: "Успешный вход", source: "auth" },
+  login_fail: { level: "warn", label: "Неудачный вход", source: "auth" },
+  login_rate_limited: { level: "warn", label: "Сработал лимит неудачных входов", source: "auth" },
+  logout: { level: "info", label: "Выход", source: "auth" },
+  file_upload: { level: "info", label: "Файл загружен", source: "files" },
+  file_delete: { level: "info", label: "Файл удалён", source: "files" },
+  file_saved: { level: "info", label: "Файл сохранён (админ)", source: "files" },
+  file_deleted: { level: "info", label: "Файл удалён (админ)", source: "files" },
+  project_create: { level: "info", label: "Проект создан", source: "projects" },
+  project_update: { level: "info", label: "Проект обновлён", source: "projects" },
+  project_delete: { level: "info", label: "Проект удалён", source: "projects" },
+  user_created: { level: "info", label: "Пользователь создан", source: "users" },
+  user_deleted: { level: "info", label: "Пользователь удалён", source: "users" },
+  limit_set: { level: "info", label: "Лимит токенов изменён", source: "limits" },
+  usage_reset: { level: "info", label: "Расход обнулён", source: "limits" },
+  auto_reset_set: { level: "info", label: "Авто-сброс расхода", source: "limits" },
+  models_access_set: { level: "info", label: "Белый список моделей", source: "models" },
+  model_set: { level: "info", label: "Модель переключена", source: "models" },
+};
+
+const DEFAULT_META: EventMeta = { level: "info", label: "Событие", source: "gateway" };
+
+/** kinds с уровнем, отличным от info (для фильтра level=info через NOT IN). */
+const NON_INFO_KINDS = Object.entries(EVENT_META)
+  .filter(([, m]) => m.level !== "info")
+  .map(([k]) => k);
+
+export interface AdminLogRow {
+  id: string;
+  timestamp: string;
+  level: EventLevel;
+  message: string;
+  source: string;
+  kind: string;
+  login: string;
+}
+
+function toLogRow(row: EventRow & { id: number }): AdminLogRow {
+  const meta = EVENT_META[row.kind] ?? DEFAULT_META;
+  return {
+    id: String(row.id),
+    timestamp: row.ts,
+    level: meta.level,
+    message: meta.label + " — " + row.login + (row.detail ? " (" + row.detail + ")" : ""),
+    source: meta.source,
+    kind: row.kind,
+    login: row.login,
+  };
+}
+
+/**
+ * Страница админского журнала из реальной таблицы events, новые сверху.
+ * level: "" | info | warn | error | debug ("" = все). Неизвестный уровень
+ * (не info/warn/error/debug) даёт пустую страницу — как и раньше по фильтру.
+ */
+export function eventsPage(
+  page: number,
+  limit: number,
+  level = ""
+): { rows: AdminLogRow[]; total: number } {
+  const db = getDb();
+  let where = "";
+  const params: (string | number)[] = [];
+  if (level) {
+    if (level === "info") {
+      if (NON_INFO_KINDS.length) {
+        where = `WHERE kind NOT IN (${NON_INFO_KINDS.map(() => "?").join(", ")})`;
+        params.push(...NON_INFO_KINDS);
+      }
+    } else {
+      const kinds = Object.entries(EVENT_META)
+        .filter(([, m]) => m.level === level)
+        .map(([k]) => k);
+      if (!kinds.length) return { rows: [], total: 0 };
+      where = `WHERE kind IN (${kinds.map(() => "?").join(", ")})`;
+      params.push(...kinds);
+    }
+  }
+  const { n } = db
+    .prepare(`SELECT COUNT(*) AS n FROM events ${where}`)
+    .get(...params) as { n: number };
+  const offset = (page - 1) * limit;
+  const rows = db
+    .prepare(`SELECT id, ts, kind, login, detail FROM events ${where} ORDER BY id DESC LIMIT ? OFFSET ?`)
+    .all(...params, limit, offset) as (EventRow & { id: number })[];
+  return { rows: rows.map(toLogRow), total: Number(n) };
+}
+
 export function failedLoginsSince(hours = 24): number {
   const cutoff = new Date(Date.now() - hours * 3_600_000).toISOString();
   const row = getDb()

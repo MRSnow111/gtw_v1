@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { AnimatePresence, motion } from "framer-motion";
 import { formatDistanceToNowStrict } from "date-fns";
 import { ru } from "date-fns/locale";
+import { useShallow } from "zustand/react/shallow";
 import {
   BarChart3, ChevronDown, ChevronRight, Folder, FolderOpen, FolderPlus,
   LogOut, MessageSquare, MoreHorizontal, Pencil, Plus, Search, Settings,
@@ -42,12 +43,35 @@ interface SidebarProps {
 
 export function Sidebar({ className, onNavigate }: SidebarProps) {
   const router = useRouter();
-  const { chats, turnsByChat, activeChatId, setActiveChat, renameChat, deleteChat, createChat } = useAgentStore();
+  // Точечные селекторы zustand (аудит O1/B16/O2): сайдбар подписан на список чатов,
+  // активный чат и СПИСОК running-чатов (useShallow), а не на весь стор — иначе
+  // каждый draft-кадр генерации перерисовывал весь список.
+  const chats = useAgentStore((s) => s.chats);
+  const activeChatId = useAgentStore((s) => s.activeChatId);
+  const runningChatIds = useAgentStore(
+    useShallow((s) => {
+      const ids: string[] = [];
+      for (const [chatId, turns] of Object.entries(s.turnsByChat)) {
+        const last = turns[turns.length - 1];
+        if (last?.kind === "agent" && last.agentState === "running") ids.push(chatId);
+      }
+      return ids;
+    })
+  );
+  const setActiveChat = useAgentStore((s) => s.setActiveChat);
+  const renameChat = useAgentStore((s) => s.renameChat);
+  const deleteChat = useAgentStore((s) => s.deleteChat);
+  const createChat = useAgentStore((s) => s.createChat);
   const {
     projects, loadProjects, createProject, renameProject, setArchived,
     deleteProject, moveChat,
-  } = useProjectStore();
-  const { setSettingsOpen, setDrawerOpen } = useUiStore();
+  } = useProjectStore(useShallow((s) => ({
+    projects: s.projects, loadProjects: s.loadProjects, createProject: s.createProject,
+    renameProject: s.renameProject, setArchived: s.setArchived,
+    deleteProject: s.deleteProject, moveChat: s.moveChat,
+  })));
+  const setSettingsOpen = useUiStore((s) => s.setSettingsOpen);
+  const setDrawerOpen = useUiStore((s) => s.setDrawerOpen);
   const logout = useAuthStore((s) => s.logout);
   const isAdmin = useAuthStore((s) => s.user?.role === "admin");
 
@@ -74,14 +98,7 @@ export function Sidebar({ className, onNavigate }: SidebarProps) {
     loadProjects();
   }, [loadProjects]);
 
-  const runningIds = useMemo(() => {
-    const ids = new Set<string>();
-    for (const [chatId, turns] of Object.entries(turnsByChat)) {
-      const last = turns[turns.length - 1];
-      if (last?.kind === "agent" && last.agentState === "running") ids.add(chatId);
-    }
-    return ids;
-  }, [turnsByChat]);
+  const runningIds = useMemo(() => new Set(runningChatIds), [runningChatIds]);
 
   const fmtTime = (iso: string) =>
     formatDistanceToNowStrict(new Date(iso), { addSuffix: false, locale: ru }).replace("секунд", "с").replace("секунды", "с").replace("минут", "мин").replace("минуты", "мин").replace("час", "ч").replace("часа", "ч").replace("часов", "ч") + " назад";

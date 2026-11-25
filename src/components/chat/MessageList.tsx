@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef } from "react";
+import { useEffect, useRef } from "react";
 import Link from "next/link";
 import { motion } from "framer-motion";
 import { RefreshCw } from "lucide-react";
@@ -32,19 +32,19 @@ interface MessageListProps {
 }
 
 export function MessageList({ chatId }: MessageListProps) {
-  const { turnsByChat, loadingChats, chats, loadTurns } = useAgentStore();
+  /* Точечные селекторы zustand (аудит O1/B16): компонент подписан только на свой чат.
+     Деструктуризация всего стора перерисовывала ленту на каждый draft-кадр. */
+  const turns = useAgentStore((s) => (chatId ? s.turnsByChat[chatId] : undefined));
+  const loading = useAgentStore((s) => (chatId ? !!s.loadingChats[chatId] : false));
+  const chatExists = useAgentStore((s) =>
+    chatId ? s.chats.some((c) => c.id === chatId) : true
+  );
+  const loadTurns = useAgentStore((s) => s.loadTurns);
   const bottomRef = useRef<HTMLDivElement>(null);
 
-  const turns = chatId ? turnsByChat[chatId] : undefined;
-  const loading = chatId ? !!loadingChats[chatId] : false;
-  const chatExists = useMemo(
-    () => !chatId || chats.some((c) => c.id === chatId),
-    [chats, chatId]
-  );
-
   useEffect(() => {
-    if (chatId && !turns && !loadingChats[chatId]) loadTurns(chatId);
-  }, [chatId, turns, loadingChats, loadTurns]);
+    if (chatId && !turns && !loading) loadTurns(chatId);
+  }, [chatId, turns, loading, loadTurns]);
 
   /* автоскролл: новые ходы, стриминг ответа, появление approval/clarify/tool-карточек */
   const last = turns?.[turns.length - 1];
