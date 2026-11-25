@@ -780,6 +780,12 @@ app.prepare().then(() => {
         parsed.user_name = login;
         return JSON.stringify(parsed);
       }
+      if (type === "stop") {
+        // Сессия задаётся login'ом из куки (как user_message), не клиентским user_id.
+        const parsed = JSON.parse(raw);
+        parsed.user_id = login;
+        return JSON.stringify(parsed);
+      }
       return raw;
     }
 

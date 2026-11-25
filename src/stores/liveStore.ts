@@ -21,6 +21,8 @@ import { useModelStore } from "@/stores/modelStore";
 
 const SILENCE_MS = 2500; // тишина после последнего кадра => ход завершён
 const silenceTimers = new Map<string, ReturnType<typeof setTimeout>>();
+// Момент явной остановки пользователем: служебные кадры после stop не воскрешают ход.
+const stoppedAt = new Map<string, number>();
 
 const uid = (p: string) => `${p}${Date.now().toString(36)}${Math.random().toString(36).slice(2, 7)}`;
 
@@ -62,6 +64,10 @@ function lastAgentTurn(chatId: string): Turn | undefined {
 function ensureAgentTurn(chatId: string): Turn {
   const last = lastAgentTurn(chatId);
   if (last && last.agentState === "running") return last;
+  // После явной остановки служебные кадры (typing, «no active» и т.п.) не должны
+  // воскрешать running-ход — новый ход создаёт только user_message.
+  const sa = stoppedAt.get(chatId);
+  if (sa !== undefined && Date.now() - sa < 15000 && last) return last;
   const turn: Turn = {
     id: uid("ta"), kind: "agent", createdAt: Date.now(),
     thinkingMs: null, tools: [], answer: "", revealed: 0, agentState: "running",
@@ -153,6 +159,23 @@ function onFrame(frame: GtwServerFrame) {
     case "message": {
       const chatId = frame.chat_id;
       const meta = frame.metadata || {};
+      // Системное уведомление шлюза (notify:true — «⚡ Stopped» после /stop и т.п.):
+      // это НЕ генерация агента. Завершаем ход, не создавая новый running-ход,
+      // иначе после остановки кнопка «Стоп» снова показывается и модель
+      // «как будто не останавливается».
+      if (meta.notify === true) {
+        const t = lastAgentTurn(chatId);
+        if (t) {
+          clearSilence(chatId);
+          finishThinking(chatId, t);
+          patchTurn(chatId, t.id, {
+            agentState: t.agentState === "running" ? "cancelled" : t.agentState,
+            statusNotes: appendStep(t, frame.message_id || "notify", frame.content || ""),
+            tools: t.tools?.map((tc) => (tc.status === "running" ? { ...tc, status: "cancelled" as const } : tc)),
+          });
+        }
+        break;
+      }
       // tool-progress: формат metadata уточняется; защищаемся от отсутствия поля
       if (typeof meta.tool === "string") {
         const t = ensureAgentTurn(chatId);
@@ -494,6 +517,7 @@ export const useLiveStore = create<DemoState>()((set, get) => ({
       },
 
       sendMessage: (chatId, text, attachments, initialModel) => {
+        stoppedAt.delete(chatId);
         const userTurn: Turn = {
           id: uid("tu"), kind: "user", createdAt: Date.now(), text,
           attachments: attachments?.length ? attachments : undefined, status: "done",
@@ -545,6 +569,7 @@ export const useLiveStore = create<DemoState>()((set, get) => ({
 
       stop: (chatId) => {
         gtwSocket.send({ type: "stop", chat_id: chatId, user_id: userId() });
+        stoppedAt.set(chatId, Date.now());
         clearSilence(chatId);
         const t = lastAgentTurn(chatId);
         if (t && t.agentState === "running") {
