@@ -217,23 +217,13 @@ function onFrame(frame: GtwServerFrame) {
     case "message": {
       const chatId = frame.chat_id;
       const meta = frame.metadata || {};
-      // Системное уведомление шлюза (notify:true — «⚡ Stopped» после /stop и т.п.):
-      // это НЕ генерация агента. Завершаем ход, не создавая новый running-ход,
-      // иначе после остановки кнопка «Стоп» снова показывается и модель
-      // «как будто не останавливается».
-      if (meta.notify === true) {
-        const t = lastAgentTurn(chatId);
-        if (t) {
-          clearSilence(chatId);
-          finishThinking(chatId, t);
-          patchTurn(chatId, t.id, {
-            agentState: t.agentState === "running" ? "cancelled" : t.agentState,
-            statusNotes: appendStep(t, frame.message_id || "notify", frame.content || ""),
-            tools: t.tools?.map((tc) => (tc.status === "running" ? { ...tc, status: "cancelled" as const } : tc)),
-          });
-        }
-        break;
-      }
+      // ВАЖНО: notify=true ядро Hermes ставит на КАЖДЫЙ финальный ответ агента
+      // (gateway _mark_notify_metadata — флаг «достоин push-уведомления» для
+      // мессенджеров), а НЕ только на служебные кадры («⚡ Stopped», «no active»).
+      // Глотать notify-кадры нельзя: ответы агента перестают рендериться
+      // (симптом «Остановлено» без текста, ответ виден только после F5).
+      // Служебные кадры после /stop не воскрешают ход благодаря guard stoppedAt
+      // в ensureAgentTurn — этого достаточно, отдельная notify-ветка не нужна.
       // tool-progress: формат metadata уточняется; защищаемся от отсутствия поля
       if (typeof meta.tool === "string") {
         const t = ensureAgentTurn(chatId);
