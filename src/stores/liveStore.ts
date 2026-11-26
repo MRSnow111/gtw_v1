@@ -114,7 +114,7 @@ function ensureAgentTurn(chatId: string): Turn {
   const sd = silenceDone.get(chatId);
   if (last && sd && sd.turnId === last.id && Date.now() - sd.at < SILENCE_REOPEN_MS) {
     silenceDone.delete(chatId);
-    patchTurn(chatId, last.id, { agentState: "running" });
+    patchTurn(chatId, last.id, { agentState: "running", emptySilence: false });
     return { ...last, agentState: "running" };
   }
   const turn: Turn = {
@@ -143,9 +143,13 @@ function armSilence(chatId: string) {
     const t = lastAgentTurn(chatId);
     if (!t || t.agentState !== "running") return;
     if (t.approval?.state === "pending" || t.clarify?.state === "pending") return;
+    // D6: ход замолчал, не принеся ни ответа, ни инструментов, ни ожидания —
+    // помечаем, чтобы UI показал причину вместо вечного «думает» → тишина.
+    const empty = !(t.answer || "").trim() && !(t.tools && t.tools.length > 0);
     patchTurn(chatId, t.id, {
       agentState: "done",
       thinkingMs: t.thinkingMs ?? Math.max(0, Date.now() - t.createdAt),
+      ...(empty ? { emptySilence: true } : {}),
     });
     // doneReason='silence': ход закрыт таймером, а не концом сообщения — следующий
     // кадр в окне SILENCE_REOPEN_MS переоткроет его, а не создаст второй ход.

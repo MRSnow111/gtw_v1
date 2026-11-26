@@ -382,6 +382,14 @@ function ThinkingBlock({ turn }: { turn: Turn }) {
 
   // нет рассуждений и не думаем — старая компактная строка «Думал Xс»
   if (!hasContent && !thinkingNow) {
+    // D6: ход закрыт тишиной без единого текста/инструмента — объясняем молчание.
+    if (!streaming && turn.emptySilence) {
+      return (
+        <div className="rounded-lg border border-amber-400/20 bg-amber-400/[0.06] px-3 py-2 text-[12px] leading-[1.6] text-amber-200/80">
+          Агент не ответил: ход завершён без текста. Попробуйте ещё раз или смените модель.
+        </div>
+      );
+    }
     if (!streaming && (turn.thinkingMs ?? 0) > 0) {
       return (
         <div className="text-[12px] text-[rgba(220,235,230,0.6)]">

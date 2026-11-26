@@ -1,6 +1,19 @@
 /** @type {import('next').NextConfig} */
+// Волна 5 K6: демо-код вне прод-бандла. При NEXT_PUBLIC_DEMO_MODE != "1"
+// модуль demoStore подменяется стабом через resolveAlias — детерминированно,
+// без расчёта на DCE мёртвой ветки require в Turbopack.
+const demoMode = process.env.NEXT_PUBLIC_DEMO_MODE === "1";
 const nextConfig = {
   reactStrictMode: true,
+  ...(demoMode
+    ? {}
+    : {
+        turbopack: {
+          resolveAlias: {
+            "@/stores/demoStore": "./src/stores/demoStoreStub.ts",
+          },
+        },
+      }),
   // Волна 3: удалён блок images.remotePatterns('**') — next/image в проекте не используется.
   async headers() {
     return [

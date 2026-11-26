@@ -2,7 +2,8 @@
 
 import { create } from "zustand";
 import type { Artifact, Approval, DemoChat, Turn, UserAttachment } from "@/lib/demoData";
-import { seedArtifacts, seedChats, seedCommands, seedTurns } from "@/lib/demoData";
+import { seedCommands } from "@/lib/demoData";
+import { seedArtifacts, seedChats, seedTurns } from "@/lib/demoSeeds";
 
 /**
  * DEMO store — имитирует данные бэкенда и ход агента (thinking → tools → streaming).
