@@ -547,7 +547,7 @@ export const useLiveStore = create<DemoState>()((set, get) => ({
         // дёрнет loadTurns заново.
         const s = get();
         const reqAt = id ? historyReqAt.get(id) : undefined;
-        if (id && s.loadingChats[id] && !s.turnsByChat[id] &&
+        if (id && s.loadingChats[id] && !s.turnsByChat[id]?.length &&
             reqAt !== undefined && Date.now() - reqAt > HISTORY_STALE_MS) {
           const { [id]: _drop, ...restLoading } = s.loadingChats;
           set({ activeChatId: id, loadingChats: restLoading });
@@ -579,7 +579,9 @@ export const useLiveStore = create<DemoState>()((set, get) => ({
 
       loadTurns: (chatId) => {
         const cur = get();
-        if (cur.turnsByChat[chatId]) return;
+        // пустой массив ≠ «история загружена»: таймаут потерянного запроса
+        // ставит [], и повторный вход должен перезапросить, а не залипнуть
+        if (cur.turnsByChat[chatId]?.length) return;
         if (cur.loadingChats[chatId]) {
           // B4 (аудит B2): запрос истории мог потеряться (офлайн/рестарт шлюза) —
           // раньше флаг держали до 6-секундного таймаута и скелетон висел. Повторный

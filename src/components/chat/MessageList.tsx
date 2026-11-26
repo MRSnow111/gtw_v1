@@ -43,7 +43,9 @@ export function MessageList({ chatId }: MessageListProps) {
   const bottomRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    if (chatId && !turns && !loading) loadTurns(chatId);
+    // !turns?.length: после таймаута потерянной истории turns=[] — это не
+    // «загружено», а «пусто из-за потери»; повторный вход должен перезапросить
+    if (chatId && !turns?.length && !loading) loadTurns(chatId);
   }, [chatId, turns, loading, loadTurns]);
 
   /* автоскролл: новые ходы, стриминг ответа, появление approval/clarify/tool-карточек */
