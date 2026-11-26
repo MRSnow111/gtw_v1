@@ -181,6 +181,23 @@ export function deleteFile(id: string): boolean {
   return true;
 }
 
+/**
+ * Удалить каталог стора пользователя целиком (каскад removeUser).
+ * Policy владельца (волна 4): при удалении учётки диск-файлы удаляются.
+ * Путь строится тем же sanitizeLogin, что и при записи; anti-traversal —
+ * isWithinStore. Ошибки fs не валят каскад: реестр в БД уже вычищен.
+ */
+export function purgeUserStore(login: string): void {
+  if (!login) return;
+  const dir = path.join(/*turbopackIgnore: true*/ fileStoreRoot(), sanitizeLogin(login));
+  if (!isWithinStore(dir) || path.resolve(dir) === path.resolve(fileStoreRoot())) return;
+  try {
+    fs.rmSync(/*turbopackIgnore: true*/ dir, { recursive: true, force: true });
+  } catch {
+    /* ignore */
+  }
+}
+
 export function fileUrl(id: string): string {
   return `/api/files/${id}`;
 }

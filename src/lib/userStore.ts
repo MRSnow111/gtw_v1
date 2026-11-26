@@ -12,6 +12,7 @@
  */
 import { createHash, randomBytes, scryptSync, timingSafeEqual } from "node:crypto";
 import { getDb } from "./db";
+import { purgeUserStore } from "./fileStore";
 
 export type Role = "admin" | "user";
 
@@ -143,8 +144,8 @@ export function addUser(login: string, password: string, role: Role): StoredUser
  * Схема сверена с src/lib/db.ts (таблицы messages нет).
  *   events  — журнал шлюза (аудит), НЕ чистится: запись «Удалён X» должна
  *             пережить удаление самой учётки;
- *   файлы на диске — НЕ удаляются (отдельное решение владельца, см.
- *             wave4-admin.md), чистится только реестр в БД.
+ *   файлы на диске — удаляются вместе с реестром (policy владельца, волна 4):
+ *             purgeUserStore после COMMIT транзакции.
  */
 const USER_DATA_TABLES = [
   "user_limits",
@@ -178,7 +179,10 @@ export function removeUser(login: string): boolean {
     purgeUserData(login);
     const res = db.prepare("DELETE FROM users WHERE login = ?").run(login);
     db.exec("COMMIT");
-    return Number(res.changes) > 0;
+    const removed = Number(res.changes) > 0;
+    // диск-файлы — после COMMIT и только если учётка реально существовала
+    if (removed) purgeUserStore(login);
+    return removed;
   } catch (e) {
     try {
       db.exec("ROLLBACK");
