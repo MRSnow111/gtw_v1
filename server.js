@@ -167,6 +167,7 @@ function recordUsage(info, connLogin) {
       tokens_in: u.inTokens || 0, tokens_out: u.outTokens || 0,
       turns: info.turns || 0, tools: (info.tools && info.tools.count) || 0,
       speed: (info.speed && info.speed.tokensPerSec) || null, source: String(info.source || "unknown"),
+      session_key: String(info.session_key || ""),
       updated_at: new Date().toISOString(),
     });
   } catch (e) {

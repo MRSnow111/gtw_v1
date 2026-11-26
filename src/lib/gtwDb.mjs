@@ -128,30 +128,81 @@ export function openGtwDb(dataDir) {
   addColumnIfMissing(db, "user_limits", "reset_day", "INTEGER NOT NULL DEFAULT 1");
   addColumnIfMissing(db, "user_limits", "next_reset_at", "TEXT");
   addColumnIfMissing(db, "user_limits", "last_reset_at", "TEXT");
+  // Кумулятивный учёт токенов по чату: ключ сессии + её последний снимок.
+  addColumnIfMissing(db, "usage_stats", "session_key", "TEXT NOT NULL DEFAULT ''");
+  addColumnIfMissing(db, "usage_stats", "sess_in", "INTEGER NOT NULL DEFAULT 0");
+  addColumnIfMissing(db, "usage_stats", "sess_out", "INTEGER NOT NULL DEFAULT 0");
+  addColumnIfMissing(db, "usage_stats", "sess_turns", "INTEGER NOT NULL DEFAULT 0");
   return db;
 }
 
 /**
- * Снимок счётчиков агента по чату (кумулятивный, перезатирается session_info).
+ * Снимок счётчиков агента по чату. Учёт КУМУЛЯТИВНЫЙ по всем сессиям чата:
+ * - source != "agent" (счётчики недоступны, напр. после рестарта gateway или
+ *   до первого хода): НЕ обнуляем накопленные токены/ходы — храним прежние;
+ * - новый session_key: счётчики новой сессии ПРИБАВЛЯЮТСЯ к итогу чата;
+ * - тот же session_key: кумулятивная дельта (итог - старый снимок + новый),
+ *   с защитой от регрессии счётчиков.
  * Пустые login/model/provider НЕ перетирают уже записанные. Числа клампятся.
- * r — snake_case поля строки usage_stats (tokens_in/tokens_out уже числа).
+ * r — snake_case поля строки usage_stats + session_key.
  */
 export function upsertUsageRow(db, r) {
+  const tin = Math.max(0, Math.round(r.tokens_in || 0));
+  const tout = Math.max(0, Math.round(r.tokens_out || 0));
+  const turns = Math.max(0, Math.round(r.turns || 0));
+  const tools = Math.max(0, Math.round(r.tools || 0));
+  const sk = String(r.session_key || "");
+  const prev = db.prepare(
+    "SELECT tokens_in, tokens_out, turns, tools, session_key, sess_in, sess_out, sess_turns FROM usage_stats WHERE chat_id = ?"
+  ).get(r.chat_id);
+  let fIn = tin, fOut = tout, fTurns = turns, fTools = tools;
+  let sessIn = tin, sessOut = tout, sessTurns = turns, key = sk;
+  if (prev) {
+    if (r.source !== "agent") {
+      // Недоверенный снимок: накопленное не трогаем, ходы/тулзы не регрессируем.
+      fIn = prev.tokens_in; fOut = prev.tokens_out;
+      fTurns = Math.max(prev.turns, turns); fTools = Math.max(prev.tools, tools);
+      sessIn = prev.sess_in; sessOut = prev.sess_out; sessTurns = prev.sess_turns;
+      key = sk || prev.session_key;
+    } else if (sk && prev.session_key && sk !== prev.session_key) {
+      // Новая сессия в том же чате: её счётчики начинаются заново — прибавляем.
+      fIn = prev.tokens_in + tin; fOut = prev.tokens_out + tout;
+      fTurns = prev.turns + turns; fTools = Math.max(prev.tools, tools);
+    } else if (sk && prev.session_key === sk) {
+      // Та же сессия: заменяем её вклад в итог свежим снимком.
+      if (tin >= prev.sess_in) { fIn = prev.tokens_in - prev.sess_in + tin; }
+      else { fIn = Math.max(prev.tokens_in, tin); sessIn = Math.max(prev.sess_in, tin); }
+      if (tout >= prev.sess_out) { fOut = prev.tokens_out - prev.sess_out + tout; }
+      else { fOut = Math.max(prev.tokens_out, tout); sessOut = Math.max(prev.sess_out, tout); }
+      if (turns >= prev.sess_turns) { fTurns = prev.turns - prev.sess_turns + turns; }
+      else { fTurns = Math.max(prev.turns, turns); sessTurns = Math.max(prev.sess_turns, turns); }
+      fTools = Math.max(prev.tools, tools);
+    } else {
+      // session_key неизвестен с одной из сторон: итог не регрессируем.
+      fIn = Math.max(prev.tokens_in, tin); fOut = Math.max(prev.tokens_out, tout);
+      fTurns = Math.max(prev.turns, turns); fTools = Math.max(prev.tools, tools);
+      key = sk || prev.session_key;
+      sessIn = Math.max(prev.sess_in, tin); sessOut = Math.max(prev.sess_out, tout);
+      sessTurns = Math.max(prev.sess_turns, turns);
+    }
+  }
   db.prepare(
-    `INSERT INTO usage_stats (chat_id, login, model, provider, tokens_in, tokens_out, turns, tools, speed, source, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `INSERT INTO usage_stats (chat_id, login, model, provider, tokens_in, tokens_out, turns, tools, speed, source, updated_at, session_key, sess_in, sess_out, sess_turns)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT(chat_id) DO UPDATE SET
        login = CASE WHEN excluded.login != '' THEN excluded.login ELSE usage_stats.login END,
        model = CASE WHEN excluded.model != '' THEN excluded.model ELSE usage_stats.model END,
        provider = CASE WHEN excluded.provider != '' THEN excluded.provider ELSE usage_stats.provider END,
        tokens_in = excluded.tokens_in, tokens_out = excluded.tokens_out,
        turns = excluded.turns, tools = excluded.tools,
-       speed = excluded.speed, source = excluded.source, updated_at = excluded.updated_at`
+       speed = excluded.speed, source = excluded.source, updated_at = excluded.updated_at,
+       session_key = excluded.session_key, sess_in = excluded.sess_in, sess_out = excluded.sess_out,
+       sess_turns = excluded.sess_turns`
   ).run(
     r.chat_id, r.login, r.model, r.provider,
-    Math.max(0, Math.round(r.tokens_in || 0)), Math.max(0, Math.round(r.tokens_out || 0)),
-    Math.max(0, Math.round(r.turns || 0)), Math.max(0, Math.round(r.tools || 0)),
-    r.speed ?? null, r.source || "unknown", r.updated_at || new Date().toISOString()
+    fIn, fOut, fTurns, fTools,
+    r.speed ?? null, r.source || "unknown", r.updated_at || new Date().toISOString(),
+    key, sessIn, sessOut, sessTurns
   );
 }
 
