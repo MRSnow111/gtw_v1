@@ -344,6 +344,24 @@ export function Composer({ chatId }: ComposerProps) {
             value={text}
             onChange={(e) => setText(e.target.value)}
             onKeyDown={onKeyDown}
+            onPaste={(e) => {
+              /* вставка изображения/файла из буфера (Ctrl+V): скриншоты и
+                 «Копировать картинку» кладут файл в clipboardData.files
+                 (в части браузеров — только в items). Текст не трогаем. */
+              const cd = e.clipboardData;
+              if (!cd) return;
+              let files = Array.from(cd.files || []);
+              if (!files.length && cd.items?.length) {
+                files = Array.from(cd.items)
+                  .filter((it) => it.kind === "file")
+                  .map((it) => it.getAsFile())
+                  .filter((f): f is File => !!f);
+              }
+              if (!files.length) return;
+              e.preventDefault();
+              if (DEMO_MODE) addFile();
+              else uploadFiles(files);
+            }}
             rows={1}
             placeholder="Напишите сообщение…"
             className="scroll-area block max-h-[168px] w-full resize-none bg-transparent px-1 py-1.5 text-[14px] leading-[20px] outline-none placeholder:text-[rgba(220,235,230,0.52)]"
