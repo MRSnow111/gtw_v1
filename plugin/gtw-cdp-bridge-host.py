@@ -54,8 +54,10 @@ def find_container():
     try:
         ids = _run(["docker", "ps", "-q"], timeout=10).stdout.split()
         for c in ids:
+            # [p] в паттерне — чтобы pgrep -f не матчил cmdline самой bash-обёртки
+            # проверки (иначе probe всегда "yes" в любом контейнере).
             probe = _run(["docker", "exec", c, "bash", "-lc",
-                          "pgrep -f bot-desktop/browser-profile >/dev/null 2>&1 && echo yes"], timeout=10)
+                          "pgrep -f bot-desktop/browser-[p]rofile >/dev/null 2>&1 && echo yes"], timeout=10)
             if probe.stdout.strip() != "yes":
                 continue
             got = _run(["docker", "inspect", "-f",
@@ -75,8 +77,10 @@ def find_container():
 def ensure_bridge(cid):
     """Доставить скрипт моста в контейнер и запустить, если не жив."""
     try:
+        # [b] — защита от self-match cmdline bash-обёртки: без неё alive всегда
+        # "yes", мост никогда не запускается в пересозданном контейнере.
         alive = _run(["docker", "exec", cid, "bash", "-lc",
-                      "pgrep -f cdp_bridge.py >/dev/null 2>&1 && echo yes"], timeout=10)
+                      "pgrep -f cdp_[b]ridge.py >/dev/null 2>&1 && echo yes"], timeout=10)
         if alive.stdout.strip() == "yes":
             return
         if os.path.isfile(BRIDGE_SRC):
