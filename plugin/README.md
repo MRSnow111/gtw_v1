@@ -10,7 +10,15 @@ Telegram/Discord. Внутри процесса gateway поднимается W
 
 | Файл | Что делает |
 |---|---|
-| `adapter.py` | сам адаптер: WS-сервер, dispatch кадров, стриминг, approvals/clarify, артефакты, статистика сессии, каталог/переключение моделей, изоляция по профилям, live-продюсер браузера |
+| `adapter.py` | ядро `GTWAdapter`: WS-сервер, авторизация, dispatch кадров, inbound (message → ход агента), approvals/clarify-развязка; здесь же ре-экспорт `register` |
+| `isolation.py` | `IsolationMixin`: профили пользователей (multiplex), served-кэш, маршруты `profile_routes`, провизион |
+| `projects.py` | `ProjectsMixin`: sandbox-home профиля, docker-cp файлов проекта, префикс контекста проекта |
+| `stats.py` | `StatsMixin`: учёт хода, `session_info`/`sessions`, счётчики токенов/скорости |
+| `live_browser.py` | `LiveBrowserMixin`: live-продюсер CDP (`_live_producer`) и рассылка `browser_frame` |
+| `models.py` | `ModelsMixin`: каталог моделей, `set_model` (PATH A/B), разбор slug провайдера |
+| `outbound.py` | `OutboundMixin`: исходящие кадры — ответы/стриминг/статусы, карточки approvals/clarify, артефакты (MEDIA) |
+| `_util.py` | общий хелпер `_ms_id` (id кадров/сообщений) |
+| `registration.py` | `register`/`check_requirements`/`validate_config`/`is_connected`/`_env_enablement` — регистрация в реестре плагинов |
 | `plugin.yaml` | манифест плагина (name/kind/version/env) |
 | `__init__.py` | обязателен загрузчику плагинов |
 | `cdp_bridge.py` | TCP-мост **внутри sandbox-контейнера**: пробрасывает CDP браузера агента наружу |
@@ -34,7 +42,7 @@ GTW_SHA=<полный SHA закоммиченного состояния>
 git clone "$GTW_REPO" /tmp/gtw-src
 git -C /tmp/gtw-src checkout --detach "$GTW_SHA"
 mkdir -p ~/.hermes/plugins/gtw
-cp /tmp/gtw-src/plugin/{plugin.yaml,adapter.py,__init__.py} ~/.hermes/plugins/gtw/
+cp /tmp/gtw-src/plugin/{plugin.yaml,__init__.py,*.py} ~/.hermes/plugins/gtw/
 cp /tmp/gtw-src/scripts/probe.py ~/gtw-probe.py     # пробник — не в каталоге плагина
 rm -rf ~/.hermes/plugins/gtw/__pycache__            # старый байткод = тихая деградация
 
@@ -63,7 +71,7 @@ python3 ~/gtw-probe.py
 ```
 
 ⚠️ Файлы плагина на хосте — **копия конкретного коммита**, а не рабочий clone:
-после любой правки `adapter.py` в репозитории нужно перенести файл на хост и
+после любой правки `adapter.py` **или модулей пакета** в репозитории нужно перенести все файлы на хост и
 заново перезапустить gateway (и удалить `__pycache__`). Рестарт gateway обрывает
 живые сессии — планировать отдельно от сборки фронта.
 
@@ -90,14 +98,14 @@ python3 ~/gtw-probe.py
 | `GTW_BROWSER_CDP_HOST` | `127.0.0.1` | адрес CDP-моста, когда браузер агента в sandbox-контейнере |
 | `GTW_BROWSER_PROFILE` | — | путь к профилю Chromium; из `<profile>/DevToolsActivePort` читается порт, если `GTW_BROWSER_DEBUG_PORT` не задан |
 
-Имена взяты из `adapter.py` (`_live_producer`) и `plugin.yaml` — там же
+Имена взяты из `live_browser.py` (`_live_producer`) и `plugin.yaml` — там же
 `optional_env`. Значения секретов в логи/доки не выписываются.
 
 ## live-просмотр браузера агента
 
 Зазор: Chromium агента (`bot-desktop`) слушает CDP на **внутреннем**
 `127.0.0.1:<случайный порт>` **внутри sandbox-контейнера**, а продюсер кадров
-(`_live_producer` в `adapter.py`) живёт в gateway **на хосте**. Мост состоит из
+(`_live_producer` в `live_browser.py`) живёт в gateway **на хосте**. Мост состоит из
 двух частей:
 
 1. `cdp_bridge.py` — внутри контейнера: слушает `0.0.0.0:9333`
@@ -186,7 +194,8 @@ Next.js-приложение GTW проксирует WS на `ws://127.0.0.1:87
   (сейчас однослойная, на `server.js`) и роли на `browser_live`;
 - персистентная история из state.db;
 - авто-реконнект live-продюсера (сейчас только кнопкой «Смотреть»);
-- декомпозиция `adapter.py` (≈1300 строк, 8 доменов) — см. аудит.
+- конфиг-управляемые константы live/провизиона (сейчас модульные константы вместо литералов в теле — волна 5) и
+  вынос `interval`/таймаутов в `plugin.yaml`/env — по желанию владельца.
 
 ## Тесты
 
