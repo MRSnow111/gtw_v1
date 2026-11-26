@@ -6,6 +6,7 @@
  * на запрещённые модели (пикер, set_model, команда /model в тексте чата).
  */
 import { getDb } from "@/lib/db";
+import { modelAllowedCore } from "@/lib/gtwDb.mjs";
 
 const now = () => new Date().toISOString();
 
@@ -65,10 +66,6 @@ export function allAllowlists(): Record<string, string[]> {
  * target — "provider/model" или голый "model" (матчим по суффиксу "/model").
  */
 export function isModelAllowed(allowlist: string[] | null, target: string): boolean {
-  if (!allowlist || allowlist.length === 0) return true;
-  const t = String(target || "").trim();
-  if (!t) return false;
-  if (allowlist.includes(t)) return true;
-  if (!t.includes("/")) return allowlist.some((a) => a.endsWith("/" + t));
-  return false;
+  // Ядро матчера — общее с server.js (gtwDb.cjs), чтобы копии не расходились.
+  return modelAllowedCore(allowlist, target);
 }

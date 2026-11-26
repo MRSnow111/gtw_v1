@@ -6,7 +6,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/adminAuth";
 import { gtwRequest } from "@/lib/gtwAdminWs";
-import { allUsage, upsertUsage, allLimits, totalTokensForLogin, grandTotalTokens } from "@/lib/usageStore";
+import { allUsage, upsertUsage, allLimits, totalTokensForLogin, grandUsedTokens } from "@/lib/usageStore";
 import type { SessionInfo } from "@/types/events";
 
 export const dynamic = "force-dynamic";
@@ -83,6 +83,6 @@ export async function GET(request: NextRequest) {
   return NextResponse.json({
     live: Boolean(live),
     items,
-    totals: { tokens: grandTotalTokens(), chats: items.length },
+    totals: { tokens: grandUsedTokens(), chats: items.length },
   });
 }

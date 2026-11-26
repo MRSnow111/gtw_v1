@@ -7,6 +7,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSession } from "@/lib/adminAuth";
 import { listChats, upsertChat } from "@/lib/chatStore";
+import { getProject } from "@/lib/projectStore";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -32,6 +33,10 @@ export async function PUT(request: NextRequest) {
   // project_id: нет в теле → сохранить привязку; null/строка → задать.
   const hasProject = Object.prototype.hasOwnProperty.call(body ?? {}, "project_id");
   const projectId = hasProject ? (body.project_id ? String(body.project_id).slice(0, 64) : null) : undefined;
+  // Как и в PATCH /api/chats/[id]: привязка только к СВОЕМУ проекту.
+  if (projectId && !getProject(session.login, projectId)) {
+    return NextResponse.json({ error: "project_not_found" }, { status: 404 });
+  }
   upsertChat(session.login, chatId, title, projectId);
   return NextResponse.json({ ok: true });
 }

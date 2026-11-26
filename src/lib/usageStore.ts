@@ -6,6 +6,16 @@
  * user_limits.token_limit: NULL или 0 = без лимита.
  */
 import { getDb } from "@/lib/db";
+import {
+  upsertUsageRow,
+  rawTotalForLogin as rawTotalShared,
+  usageOffsetForLogin as offsetShared,
+  usedForLogin,
+  resetUsageOffset,
+  computeNextResetMs,
+  limitForLogin,
+  grandUsedTokens as grandUsedShared,
+} from "@/lib/gtwDb.mjs";
 
 export interface UsageRow {
   chatId: string;
@@ -24,28 +34,11 @@ export interface UsageRow {
 const now = () => new Date().toISOString();
 
 export function upsertUsage(row: UsageRow): void {
-  getDb()
-    .prepare(
-      `INSERT INTO usage_stats (chat_id, login, model, provider, tokens_in, tokens_out, turns, tools, speed, source, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-       ON CONFLICT(chat_id) DO UPDATE SET
-         login = CASE WHEN excluded.login != '' THEN excluded.login ELSE usage_stats.login END,
-         model = CASE WHEN excluded.model != '' THEN excluded.model ELSE usage_stats.model END,
-         provider = CASE WHEN excluded.provider != '' THEN excluded.provider ELSE usage_stats.provider END,
-         tokens_in = excluded.tokens_in,
-         tokens_out = excluded.tokens_out,
-         turns = excluded.turns,
-         tools = excluded.tools,
-         speed = excluded.speed,
-         source = excluded.source,
-         updated_at = excluded.updated_at`
-    )
-    .run(
-      row.chatId, row.login, row.model, row.provider,
-      Math.max(0, Math.round(row.tokensIn)), Math.max(0, Math.round(row.tokensOut)),
-      Math.max(0, Math.round(row.turns)), Math.max(0, Math.round(row.tools)),
-      row.speed, row.source, row.updatedAt || now()
-    );
+  upsertUsageRow(getDb(), {
+    chat_id: row.chatId, login: row.login, model: row.model, provider: row.provider,
+    tokens_in: row.tokensIn, tokens_out: row.tokensOut, turns: row.turns, tools: row.tools,
+    speed: row.speed, source: row.source, updated_at: row.updatedAt || now(),
+  });
 }
 
 interface RawUsage {
@@ -76,23 +69,17 @@ export function usageForChat(chatId: string): UsageRow | null {
 
 /** Суммарное потребление логина по всем его чатам с учётом offset сброса. */
 export function totalTokensForLogin(login: string): number {
-  return Math.max(0, rawTotalForLogin(login) - usageOffsetForLogin(login));
+  return usedForLogin(getDb(), login);
 }
 
 /** «Сырая» сумма токенов по снапшотам usage_stats (без offset) — база для сброса. */
 export function rawTotalForLogin(login: string): number {
-  const r = getDb()
-    .prepare("SELECT COALESCE(SUM(tokens_in + tokens_out), 0) AS t FROM usage_stats WHERE login = ?")
-    .get(login) as unknown as { t: number };
-  return Number(r?.t ?? 0);
+  return rawTotalShared(getDb(), login);
 }
 
 /** Offset сброса: сколько токенов «списано» при последнем сбросе расхода. */
 export function usageOffsetForLogin(login: string): number {
-  const r = getDb()
-    .prepare("SELECT usage_offset FROM user_limits WHERE login = ?")
-    .get(login) as unknown as { usage_offset: number };
-  return Number(r?.usage_offset ?? 0);
+  return offsetShared(getDb(), login);
 }
 
 /**
@@ -102,20 +89,8 @@ export function usageOffsetForLogin(login: string): number {
  * устойчивым. Лимит (token_limit) и конфиг авто-сброса сохраняются.
  */
 export function resetUsage(login: string): { used: number; offset: number } {
-  const db = getDb();
-  const total = rawTotalForLogin(login);
-  const now = new Date().toISOString();
-  const existing = db.prepare("SELECT login FROM user_limits WHERE login = ?").get(login);
-  if (existing) {
-    db.prepare(
-      "UPDATE user_limits SET usage_offset = ?, last_reset_at = ?, updated_at = ? WHERE login = ?",
-    ).run(total, now, now, login);
-  } else {
-    db.prepare(
-      "INSERT INTO user_limits (login, token_limit, usage_offset, last_reset_at, updated_at) VALUES (?, NULL, ?, ?, ?)",
-    ).run(login, total, now, now);
-  }
-  return { used: 0, offset: total };
+  const offset = resetUsageOffset(getDb(), login);
+  return { used: 0, offset };
 }
 
 export type ResetMode = "off" | "daily" | "weekly" | "monthly";
@@ -148,41 +123,13 @@ export function getResetConfig(login: string): ResetConfig {
 }
 
 /**
- * Ближайший момент авто-сброса строго после from (время сервера, UTC).
- * daily — каждый день в hour:00; weekly — день недели day (1=Пн..7=Вс) в hour:00;
- * monthly — число day (1-28) в hour:00. null для mode='off'.
+ * Ближайший момент авто-сброса строго после from (UTC). Ядро — в gtwDb.cjs
+ * (единая копия с server.js); здесь только Date-обёртка.
+ * daily — каждый день в resetHour:00; weekly — resetDay 1=Пн..7=Вс; monthly — resetDay 1-28.
  */
 export function computeNextReset(mode: ResetMode, hour: number, day: number, from: Date): Date | null {
-  if (mode === "off") return null;
-  const h = Math.min(23, Math.max(0, Math.floor(hour)));
-  const at = (d: Date) => {
-    const x = new Date(d);
-    x.setUTCHours(h, 0, 0, 0);
-    return x;
-  };
-  if (mode === "daily") {
-    let cand = at(from);
-    if (cand <= from) cand = new Date(cand.getTime() + 86400000);
-    return cand;
-  }
-  if (mode === "weekly") {
-    const target = (Math.min(7, Math.max(1, Math.floor(day))) - 1) % 7; // 0=Пн..6=Вс
-    const jsTarget = (target + 1) % 7; // JS: 0=Вс..6=Сб
-    let cand = at(from);
-    for (let i = 0; i < 8; i++) {
-      if (cand.getUTCDay() === jsTarget && cand > from) return cand;
-      cand = new Date(cand.getTime() + 86400000);
-    }
-    return cand;
-  }
-  const dom = Math.min(28, Math.max(1, Math.floor(day)));
-  const cand = at(from);
-  cand.setUTCDate(dom);
-  if (cand <= from) {
-    cand.setUTCMonth(cand.getUTCMonth() + 1);
-    cand.setUTCDate(dom);
-  }
-  return cand;
+  const ms = computeNextResetMs(mode, hour, day, from.getTime());
+  return ms === null ? null : new Date(ms);
 }
 
 /** Записать конфиг авто-сброса и вычислить next_reset_at. Сохраняет token_limit/offset. */
@@ -212,10 +159,13 @@ export function grandTotalTokens(): number {
   return r?.t ?? 0;
 }
 
+/** Суммарный расход всех логинов с учётом offset каждого (totals админки). */
+export function grandUsedTokens(): number {
+  return grandUsedShared(getDb());
+}
+
 export function getLimit(login: string): number | null {
-  const r = getDb().prepare("SELECT token_limit FROM user_limits WHERE login = ?").get(login) as unknown as { token_limit: number | null } | undefined;
-  if (!r || r.token_limit === null || r.token_limit <= 0) return null;
-  return r.token_limit;
+  return limitForLogin(getDb(), login);
 }
 
 export function setLimit(login: string, limit: number | null): void {

@@ -55,123 +55,21 @@ if (!dev && !(process.env["GTW_AUTH_" + "SECRET"] || process.env["GTW_" + "TOKEN
 
 /* ── SQLite: лимиты и учёт токенов (та же БД, что у Next-роутов) ── */
 const DATA_DIR = process.env.GTW_DATA_DIR || path.join(process.cwd(), "data");
+// Волна 5 (K1): схема/миграции/общие запросы — в едином модуле gtwDb.mjs
+// (та же копия используется src/lib/db.ts). busy_timeout=5000 против SQLITE_BUSY.
+const gtwDb = require("./src/lib/gtwDb.mjs");
 let db = null;
 function getDb() {
-  if (!db) {
-    fs.mkdirSync(DATA_DIR, { recursive: true });
-    db = new DatabaseSync(path.join(DATA_DIR, "gtw.db"));
-    db.exec("PRAGMA journal_mode = WAL;");
-    db.exec(`
-      CREATE TABLE IF NOT EXISTS usage_stats (
-        chat_id    TEXT PRIMARY KEY,
-        login      TEXT NOT NULL DEFAULT '',
-        model      TEXT NOT NULL DEFAULT '',
-        provider   TEXT NOT NULL DEFAULT '',
-        tokens_in  INTEGER NOT NULL DEFAULT 0,
-        tokens_out INTEGER NOT NULL DEFAULT 0,
-        turns      INTEGER NOT NULL DEFAULT 0,
-        tools      INTEGER NOT NULL DEFAULT 0,
-        speed      REAL,
-        source     TEXT NOT NULL DEFAULT 'unknown',
-        updated_at TEXT NOT NULL
-      );
-      CREATE INDEX IF NOT EXISTS idx_usage_login ON usage_stats (login);
-      CREATE TABLE IF NOT EXISTS user_limits (
-        login       TEXT PRIMARY KEY,
-        token_limit INTEGER,
-        updated_at  TEXT NOT NULL
-      );
-      CREATE TABLE IF NOT EXISTS user_models (
-        login      TEXT PRIMARY KEY,
-        models     TEXT NOT NULL,
-        updated_at TEXT NOT NULL
-      );
-      CREATE TABLE IF NOT EXISTS files (
-        id           TEXT PRIMARY KEY,
-        login        TEXT NOT NULL,
-        chat_id      TEXT NOT NULL DEFAULT '',
-        project_id   TEXT,
-        direction    TEXT NOT NULL CHECK (direction IN ('in', 'out')),
-        name         TEXT NOT NULL,
-        mime         TEXT NOT NULL DEFAULT 'application/octet-stream',
-        size         INTEGER NOT NULL DEFAULT 0,
-        storage_path TEXT NOT NULL,
-        created_at   TEXT NOT NULL
-      );
-      CREATE INDEX IF NOT EXISTS idx_files_login ON files (login, created_at);
-      CREATE INDEX IF NOT EXISTS idx_files_chat ON files (chat_id);
-      CREATE TABLE IF NOT EXISTS chats (
-        login      TEXT NOT NULL,
-        chat_id    TEXT NOT NULL,
-        title      TEXT NOT NULL DEFAULT 'Новый чат',
-        project_id TEXT,
-        created_at TEXT NOT NULL,
-        updated_at TEXT NOT NULL,
-        PRIMARY KEY (login, chat_id)
-      );
-      CREATE INDEX IF NOT EXISTS idx_chats_login ON chats (login, updated_at);
-      CREATE TABLE IF NOT EXISTS projects (
-        id         TEXT PRIMARY KEY,
-        login      TEXT NOT NULL,
-        name       TEXT NOT NULL,
-        slug       TEXT NOT NULL,
-        archived   INTEGER NOT NULL DEFAULT 0,
-        created_at TEXT NOT NULL,
-        updated_at TEXT NOT NULL
-      );
-      CREATE UNIQUE INDEX IF NOT EXISTS idx_projects_slug ON projects (login, slug);
-      CREATE INDEX IF NOT EXISTS idx_projects_login ON projects (login, updated_at);
-      /* W1-S4-TABLE: зеркало src/lib/db.ts — учётные записи. Оба процесса открывают
-       * одну SQLite независимо, поэтому CREATE TABLE IF NOT EXISTS дублируется.
-       * Нужен server.js для сверки куки с живой учёткой (S4) и для того, чтобы
-       * отсутствие таблицы не выглядело как «пользователей нет». */
-      CREATE TABLE IF NOT EXISTS users (
-        login      TEXT PRIMARY KEY,
-        pass_hash  TEXT NOT NULL,
-        salt       TEXT NOT NULL,
-        role       TEXT NOT NULL CHECK (role IN ('admin', 'user')),
-        created_at TEXT NOT NULL,
-        last_login TEXT
-      );
-    `);
-    // Миграция существующих БД: колонки project_id могли отсутствовать.
-    for (const tbl of ["chats", "files"]) {
-      const cols = db.prepare(`PRAGMA table_info(${tbl})`).all();
-      if (!cols.some((c) => c.name === "project_id")) {
-        db.exec(`ALTER TABLE ${tbl} ADD COLUMN project_id TEXT`);
-      }
-    }
-    // Сброс расхода: offset + конфиг авто-сброса (синхронно с src/lib/db.ts).
-    const ulCols = db.prepare("PRAGMA table_info(user_limits)").all().map((c) => c.name);
-    const ulAdd = [
-      ["usage_offset", "INTEGER NOT NULL DEFAULT 0"],
-      ["reset_mode", "TEXT NOT NULL DEFAULT 'off'"],
-      ["reset_hour", "INTEGER NOT NULL DEFAULT 0"],
-      ["reset_day", "INTEGER NOT NULL DEFAULT 1"],
-      ["next_reset_at", "TEXT"],
-      ["last_reset_at", "TEXT"],
-    ];
-    for (const [name, decl] of ulAdd) {
-      if (!ulCols.includes(name)) db.exec(`ALTER TABLE user_limits ADD COLUMN ${name} ${decl}`);
-    }
-  }
+  if (!db) db = gtwDb.openGtwDb(DATA_DIR);
   return db;
 }
 /** Расход логина с учётом offset сброса: used = MAX(0, SUM(tokens) - usage_offset). */
 function usedFor(login) {
-  const r = getDb()
-    .prepare("SELECT COALESCE(SUM(tokens_in + tokens_out), 0) AS t FROM usage_stats WHERE login = ?")
-    .get(login);
-  const off = getDb().prepare("SELECT usage_offset FROM user_limits WHERE login = ?").get(login);
-  const total = (r && r.t) || 0;
-  const offset = (off && off.usage_offset) || 0;
-  return Math.max(0, total - offset);
+  return gtwDb.usedForLogin(getDb(), login);
 }
 function quotaFor(login) {
   try {
-    const lim = getDb().prepare("SELECT token_limit FROM user_limits WHERE login = ?").get(login);
-    const limit = lim && lim.token_limit > 0 ? lim.token_limit : null;
-    return { limit, used: usedFor(login) };
+    return { limit: gtwDb.limitForLogin(getDb(), login), used: usedFor(login) };
   } catch (e) {
     console.error("[gtw-proxy] quota check failed:", e.message);
     return { limit: null, used: 0 }; // fail-open: сбой БД не блокирует чат
@@ -184,16 +82,7 @@ const liveClients = new Set(); // { login, sendQuota }
 
 /** Обнулить used логина через offset = текущая сумма; снапшоты не трогаем. */
 function resetUsageFor(login) {
-  const db = getDb();
-  const r = db.prepare("SELECT COALESCE(SUM(tokens_in + tokens_out), 0) AS t FROM usage_stats WHERE login = ?").get(login);
-  const total = (r && r.t) || 0;
-  const now = new Date().toISOString();
-  const existing = db.prepare("SELECT login FROM user_limits WHERE login = ?").get(login);
-  if (existing) {
-    db.prepare("UPDATE user_limits SET usage_offset = ?, last_reset_at = ?, updated_at = ? WHERE login = ?").run(total, now, now, login);
-  } else {
-    db.prepare("INSERT INTO user_limits (login, token_limit, usage_offset, last_reset_at, updated_at) VALUES (?, NULL, ?, ?, ?)").run(login, total, now, now);
-  }
+  const total = gtwDb.resetUsageOffset(getDb(), login);
   for (const c of liveClients) {
     if (c.login === login) { try { c.sendQuota(); } catch {} }
   }
@@ -202,29 +91,8 @@ function resetUsageFor(login) {
 
 /** Ближайший авто-сброс строго после from (UTC). Зеркало usageStore.computeNextReset. */
 function computeNextReset(mode, hour, day, from) {
-  if (mode === "off") return null;
-  const h = Math.min(23, Math.max(0, Math.floor(hour)));
-  const at = (d) => { const x = new Date(d); x.setUTCHours(h, 0, 0, 0); return x; };
-  if (mode === "daily") {
-    let cand = at(from);
-    if (cand <= from) cand = new Date(cand.getTime() + 86400000);
-    return cand;
-  }
-  if (mode === "weekly") {
-    const target = (Math.min(7, Math.max(1, Math.floor(day))) - 1) % 7;
-    const jsTarget = (target + 1) % 7;
-    let cand = at(from);
-    for (let i = 0; i < 8; i++) {
-      if (cand.getUTCDay() === jsTarget && cand > from) return cand;
-      cand = new Date(cand.getTime() + 86400000);
-    }
-    return cand;
-  }
-  const dom = Math.min(28, Math.max(1, Math.floor(day)));
-  const cand = at(from);
-  cand.setUTCDate(dom);
-  if (cand <= from) { cand.setUTCMonth(cand.getUTCMonth() + 1); cand.setUTCDate(dom); }
-  return cand;
+  const ms = gtwDb.computeNextResetMs(mode, hour, day, from.getTime());
+  return ms === null ? null : new Date(ms);
 }
 
 /** Планировщик: обнуляем расход тем, у кого next_reset_at уже наступил. */
@@ -248,8 +116,10 @@ function runAutoResets() {
     console.error("[gtw-proxy] auto-reset failed:", e.message);
   }
 }
-function chatOwnerLogin(chatId) {
-  if (chatOwners.has(chatId)) return chatOwners.get(chatId);
+/** Владелец чата: сначала кэш ЭТОГО логина (ключ login+chatId), затем БД. */
+function chatOwnerLogin(login, chatId) {
+  const k = chatKey(login, chatId);
+  if (chatOwners.has(k)) return chatOwners.get(k);
   try {
     const r = getDb().prepare("SELECT login FROM usage_stats WHERE chat_id = ?").get(chatId);
     return (r && r.login) || "";
@@ -286,35 +156,26 @@ function sessionInfoBlockOwner(chatId, login) {
     return "";
   }
 }
-function recordUsage(info) {
+function recordUsage(info, connLogin) {
   try {
     const chatId = String(info.chat_id || "");
     if (!chatId) return;
-    const login = chatOwners.get(chatId) || chatOwnerLogin(chatId) || String(info.user_id || "");
+    const login = chatOwners.get(chatKey(connLogin, chatId)) || chatOwnerLogin(connLogin, chatId) || String(info.user_id || "");
     const u = info.usage || {};
-    getDb()
-      .prepare(
-        `INSERT INTO usage_stats (chat_id, login, model, provider, tokens_in, tokens_out, turns, tools, speed, source, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-         ON CONFLICT(chat_id) DO UPDATE SET
-           login = CASE WHEN excluded.login != '' THEN excluded.login ELSE usage_stats.login END,
-           model = CASE WHEN excluded.model != '' THEN excluded.model ELSE usage_stats.model END,
-           provider = CASE WHEN excluded.provider != '' THEN excluded.provider ELSE usage_stats.provider END,
-           tokens_in = excluded.tokens_in, tokens_out = excluded.tokens_out,
-           turns = excluded.turns, tools = excluded.tools,
-           speed = excluded.speed, source = excluded.source, updated_at = excluded.updated_at`
-      )
-      .run(
-        chatId, login, String(info.model || ""), String(info.provider || ""),
-        Math.max(0, Math.round(u.inTokens || 0)), Math.max(0, Math.round(u.outTokens || 0)),
-        Math.max(0, Math.round(info.turns || 0)), Math.max(0, Math.round((info.tools && info.tools.count) || 0)),
-        (info.speed && info.speed.tokensPerSec) || null, String(info.source || "unknown"),
-        new Date().toISOString()
-      );
+    gtwDb.upsertUsageRow(getDb(), {
+      chat_id: chatId, login, model: String(info.model || ""), provider: String(info.provider || ""),
+      tokens_in: u.inTokens || 0, tokens_out: u.outTokens || 0,
+      turns: info.turns || 0, tools: (info.tools && info.tools.count) || 0,
+      speed: (info.speed && info.speed.tokensPerSec) || null, source: String(info.source || "unknown"),
+      updated_at: new Date().toISOString(),
+    });
   } catch (e) {
     console.error("[gtw-proxy] usage record failed:", e.message);
   }
 }
+// Ключ chat-state: login+chatId (волна 5): один chatId («main») у разных
+// пользователей не должен перетирать чужие модель/владельца/ack.
+const chatKey = (login, chatId) => login + "\u0000" + chatId;
 const chatOwners = new Map(); // chat_id -> login (из user_message этой сессии)
 const chatModels = new Map(); // chat_id -> "provider/model" (текущая модель из кадров шлюза)
 // Подтверждённая применённая модель (из set_model_ack.ok; session_info — только пока
@@ -469,13 +330,10 @@ function normModelKey(key) {
 /** Разрешена ли модель: "provider/model" или голый "model" (матч по суффиксу).
  *  Обе стороны нормализуются к display-форме провайдера. */
 function modelAllowed(allow, target) {
+  // Ядро матчера — общее с modelStore.isModelAllowed (gtwDb.mjs);
+  // здесь только нормализация slug->display имён провайдеров.
   if (!allow || !allow.length) return true;
-  const t = normModelKey(target);
-  if (!t) return false;
-  const norm = allow.map((a) => normModelKey(a));
-  if (norm.includes(t)) return true;
-  if (!t.includes("/")) return norm.some((a) => a.endsWith("/" + t));
-  return false;
+  return gtwDb.modelAllowedCore(allow.map((a) => normModelKey(a)), normModelKey(target));
 }
 
 /** Проверка куки gtw-auth: формат v1.<b64url(payload)>.<b64url(HMAC-SHA256)>, срок не истёк. */
@@ -659,6 +517,9 @@ app.prepare().then(() => {
     // вторая вкладка (cross-tab) получает кадры своих чатов без history-запроса.
     // Админ без фильтра (регистрирует любой чат, к которому обращается).
     const connChats = new Set(); // chat_id, которые это соединение вправе получать
+    // Ключи chat-state, тронутые этим соединением (для очистки при закрытии).
+    const touchedKeys = new Set();
+    const ck = (cid) => { const k = chatKey(login, cid); touchedKeys.add(k); return k; };
     if (!isAdmin) {
       try {
         for (const r of getDb().prepare("SELECT chat_id FROM chats WHERE login = ?").all(login)) connChats.add(String(r.chat_id));
@@ -681,6 +542,12 @@ app.prepare().then(() => {
       if (closed) return;
       closed = true;
       liveClients.delete(liveEntry);
+      // Последнее соединение логина закрыто — чистим его chat-state (анти-утечка памяти).
+      if (![...liveClients].some((c) => c.login === login)) {
+        for (const k of touchedKeys) {
+          chatOwners.delete(k); chatModels.delete(k); appliedModels.delete(k); ackConfirmed.delete(k);
+        }
+      }
       clearInterval(keepalive);
       try { client.close(code, reason); } catch {}
       try { upstream.close(); } catch {}
@@ -729,16 +596,16 @@ app.prepare().then(() => {
           try {
             const frame = JSON.parse(data.toString("utf8"));
             if (frame.type === "session_info" && frame.info) {
-              recordUsage(frame.info);
+              recordUsage(frame.info, login);
               const inf = frame.info;
               if (inf.provider && inf.model) {
                 const k = normModelKey(`${inf.provider}/${inf.model}`);
                 const cid = String(inf.chat_id);
                 // После подтверждённого переключения (ack) session_info может нести
                 // устаревшую/профильную модель — не перетираем применённую.
-                if (!ackConfirmed.has(cid)) {
-                  chatModels.set(cid, k);
-                  appliedModels.set(cid, k);
+                if (!ackConfirmed.has(ck(cid))) {
+                  chatModels.set(ck(cid), k);
+                  appliedModels.set(ck(cid), k);
                 }
               }
               sendQuota(); // обновляем индикатор лимита после учёта токенов
@@ -754,18 +621,18 @@ app.prepare().then(() => {
               // session_info), а не дефолт профиля из models.current: иначе открытие
               // пикера (повторный запрос models) откатывает метку на запрещённый дефолт,
               // а B1-защита autoSwitchTried уже не даёт переключить повторно.
-              const applied = appliedModels.get(cid);
+              const applied = appliedModels.get(ck(cid));
               const cur = frame.current;
               if (applied && applied.includes("/")) {
                 const i = applied.indexOf("/");
                 frame.current = { provider: applied.slice(0, i), model: applied.slice(i + 1) };
-                chatModels.set(cid, applied);
+                chatModels.set(ck(cid), applied);
                 outData = Buffer.from(JSON.stringify(frame), "utf8");
               } else if (cur && cur.provider && cur.model) {
                 // current к display: пикер подсвечивает текущую модель (ключи каталога —
                 // display), гейт хранит chatModels в той же форме.
                 cur.provider = providerSlugToDisplay.get(cur.provider) || cur.provider;
-                chatModels.set(cid, `${cur.provider}/${cur.model}`);
+                chatModels.set(ck(cid), `${cur.provider}/${cur.model}`);
                 outData = Buffer.from(JSON.stringify(frame), "utf8");
               }
               if (!isAdmin) {
@@ -782,9 +649,9 @@ app.prepare().then(() => {
               const mdl = normModelKey(String(frame.model || ""));
               if (mdl.includes("/")) {
                 const cid = String(frame.chat_id);
-                chatModels.set(cid, mdl);
-                appliedModels.set(cid, mdl);
-                ackConfirmed.add(cid); // применённая модель подтверждена — session_info её не перетрёт
+                chatModels.set(ck(cid), mdl);
+                appliedModels.set(ck(cid), mdl);
+                ackConfirmed.add(ck(cid)); // применённая модель подтверждена — session_info её не перетрёт
               }
             } else if (frame.type === "artifact") {
               // артефакт агента: url — host-путь файла. Копируем в стор + реестр,
@@ -850,7 +717,7 @@ app.prepare().then(() => {
           sendToClient({ type: "error", error: "forbidden" });
           return null;
         }
-        chatOwners.set(chatId, login);
+        chatOwners.set(ck(chatId), login);
         connChats.add(chatId); // S1: свой ход — это соединение вправе получать кадры чата
         const { limit, used } = quotaFor(login);
         if (limit !== null && used >= limit) {
@@ -866,7 +733,7 @@ app.prepare().then(() => {
             sendToClient({ type: "error", error: "model_forbidden", model: requestedModel });
             return null;
           }
-          chatModels.set(chatId, requestedModel);
+          chatModels.set(ck(chatId), requestedModel);
           const sm = JSON.stringify({ type: "set_model", chat_id: chatId, model: requestedModel, user_id: login, user_name: login });
           if (opened && upstream.readyState === WebSocket.OPEN) {
             try { upstream.send(sm, { binary: false }); } catch {}
@@ -892,11 +759,11 @@ app.prepare().then(() => {
             // модели. Раньше не-разрешённая текущая модель блокировала чат ошибкой
             // model_forbidden reason:current, а авто-выбор срабатывал только при пустой
             // модели — чат «переставал работать», пока пользователь не откроет пикер.
-            const cur = chatModels.get(chatId);
+            const cur = chatModels.get(ck(chatId));
             const curOk = !!cur && modelAllowed(allow, cur);
             if (!curOk && allow && allow.length) {
               const target = allow[0];
-              chatModels.set(chatId, target);
+              chatModels.set(ck(chatId), target);
               const sm = JSON.stringify({ type: "set_model", chat_id: chatId, model: target, user_id: login, user_name: login });
               if (opened && upstream.readyState === WebSocket.OPEN) {
                 try { upstream.send(sm, { binary: false }); } catch {}
@@ -985,7 +852,7 @@ app.prepare().then(() => {
         connChats.add(chatId);
         // login из куки — чтобы /model применился к ТОЙ ЖЕ сессии, что и user_message
         // (иначе override уходит в сессию "gtw", а ходы идут в сессии login -> модель откатывается)
-        const parsed = JSON.parse(raw);
+        const parsed = frame; // уже распарсен выше — повторный parse не нужен
         parsed.user_id = login;
         parsed.user_name = login;
         return JSON.stringify(parsed);
@@ -999,7 +866,7 @@ app.prepare().then(() => {
           return null;
         }
         connChats.add(chatId);
-        const parsed = JSON.parse(raw);
+        const parsed = frame; // уже распарсен выше — повторный parse не нужен
         parsed.user_id = login; // для слоя 2 (владелец на стороне адаптера)
         parsed.role = isAdmin ? "admin" : "user"; // роль из куки, не из клиента
         return JSON.stringify(parsed);
@@ -1014,20 +881,20 @@ app.prepare().then(() => {
           return null;
         }
         connChats.add(chatId); // S1: разрешённый session_info открывает downstream чата
-        const owner = chatOwnerLogin(chatId);
-        if (owner) chatOwners.set(chatId, owner);
+        const owner = chatOwnerLogin(login, chatId);
+        if (owner) chatOwners.set(ck(chatId), owner);
         return raw;
       }
       if (type === "browser_live") {
         // Live-просмотр браузера агента: только владелец чата или админ.
         const chatId = String(frame.chat_id || "main");
-        const owner = chatOwnerLogin(chatId);
+        const owner = chatOwnerLogin(login, chatId);
         if (!isAdmin && owner && owner !== login) {
           sendToClient({ type: "error", error: "forbidden" });
           return null;
         }
         connChats.add(chatId); // S1: зритель live вправе получать кадры этого чата
-        const parsed = JSON.parse(raw);
+        const parsed = frame; // уже распарсен выше — повторный parse не нужен
         parsed.user_id = login; // login из подписанной куки, не из клиента
         parsed.user_name = login;
         parsed.role = isAdmin ? "admin" : "user"; // слой 2: soft-гейт browser_live
@@ -1042,14 +909,14 @@ app.prepare().then(() => {
           return null;
         }
         connChats.add(chatId);
-        const parsed = JSON.parse(raw);
+        const parsed = frame; // уже распарсен выше — повторный parse не нужен
         parsed.user_id = login;
         return JSON.stringify(parsed);
       }
       if (type === "approval_response" || type === "clarify_response") {
         // S1: инжектим user_id/role из куки (chat_id у этих кадров нет — гейтить
         // нечего); слой 2 проверяет владельца request_id/clarify_id на стороне адаптера.
-        const parsed = JSON.parse(raw);
+        const parsed = frame; // уже распарсен выше — повторный parse не нужен
         parsed.user_id = login;
         parsed.role = isAdmin ? "admin" : "user";
         return JSON.stringify(parsed);
